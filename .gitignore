@@ -1,0 +1,25 @@
+node_modules/
+
+# Konfigurasi lokal dan rahasia
+.env
+.env.*
+!.env.example
+
+# Credential/session WhatsApp
+sessions/*
+!sessions/.gitkeep
+
+# Log runtime
+logs/*
+!logs/.gitkeep
+*.log
+
+# Database/recovery dinonaktifkan pada implementasi awal
+data/*.sqlite
+data/*.sqlite-*
+data/*.db
+
+# Artefak lokal
+coverage/
+.DS_Store
+Thumbs.db
