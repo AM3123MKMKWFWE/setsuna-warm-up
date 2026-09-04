@@ -1,8 +1,10 @@
+import { PresenceChoreographer } from "../utils/presence-choreographer.js"
 import { WhatsAppSession } from "./whatsapp-session.js"
 
 export class SessionManager {
   constructor({ config, logger, sessionFactory }) {
     this.logger = logger
+    this.presenceChoreographer = new PresenceChoreographer(config.presence)
     const createSession =
       sessionFactory ?? ((options) => new WhatsAppSession(options))
     const reconnectOptions = {
@@ -111,6 +113,23 @@ export class SessionManager {
     }
 
     const canonicalRecipientJid = await sender.resolveTargetJid(recipientJid)
+    const typingPlan = this.presenceChoreographer.computeTypingPlan(
+      String(text ?? "").trim().length
+    )
+
+    if (typingPlan.length > 0) {
+      this.logger.info("session-manager.presence.started", {
+        sender: senderName,
+        recipient: recipientName,
+        steps: typingPlan.length
+      })
+      await this.presenceChoreographer.executeTypingPlan(
+        sender.socket,
+        canonicalRecipientJid,
+        typingPlan
+      )
+    }
+
     return sender.sendText(canonicalRecipientJid, text)
   }
 
