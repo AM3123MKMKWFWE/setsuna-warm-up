@@ -29,6 +29,7 @@ function createQaPresence(config = {}) {
 export class SessionManager {
   constructor({ config, logger, sessionFactory, presenceChoreographer }) {
     this.logger = logger
+    this.presenceEnabled = config.presence?.enabled === true
     this.presenceChoreographer =
       presenceChoreographer ?? createQaPresence(config.presence)
     const createSession =
@@ -141,21 +142,24 @@ export class SessionManager {
 
     const canonicalRecipientJid = await sender.resolveTargetJid(recipientJid)
     const normalizedText = String(text ?? "").trim()
-    const plan = this.presenceChoreographer.computeTypingPlan(
-      normalizedText.length
-    )
 
-    if (plan.length > 0) {
-      this.logger.info("session-manager.presence.qa", {
-        sender: senderName,
-        recipient: recipientName,
-        steps: plan.length
-      })
-      await this.presenceChoreographer.executeTypingPlan(
-        sender.socket,
-        canonicalRecipientJid,
-        plan
+    if (this.presenceEnabled) {
+      const plan = this.presenceChoreographer.computeTypingPlan(
+        normalizedText.length
       )
+
+      if (plan.length > 0) {
+        this.logger.info("session-manager.presence.qa", {
+          sender: senderName,
+          recipient: recipientName,
+          steps: plan.length
+        })
+        await this.presenceChoreographer.executeTypingPlan(
+          sender.socket,
+          canonicalRecipientJid,
+          plan
+        )
+      }
     }
 
     return sender.sendText(canonicalRecipientJid, normalizedText)
