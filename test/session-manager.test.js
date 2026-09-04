@@ -93,7 +93,10 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
 
 test("SessionManager menjalankan presence plan sebelum mengirim pesan", async () => {
   const calls = []
-  const config = loadConfig({}, { cwd: "C:/workspace" })
+  const config = loadConfig(
+    { PRESENCE_ENABLED: "true" },
+    { cwd: "C:/workspace" }
+  )
   const presenceChoreographer = {
     computeTypingPlan(length) {
       calls.push(["compute", length])
