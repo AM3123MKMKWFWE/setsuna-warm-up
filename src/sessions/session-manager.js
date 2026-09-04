@@ -1,8 +1,36 @@
+import { PresenceChoreographer } from "baileys-antiban"
+
 import { WhatsAppSession } from "./whatsapp-session.js"
 
+function createQaPresence(config = {}) {
+  return new PresenceChoreographer({
+    enabled: config.enabled ?? false,
+    enableCircadianRhythm: false,
+    circadian: {
+      enabled: false,
+      profile: "always_on",
+      timezone: "UTC"
+    },
+    distractionPauseProbability: 0,
+    offlineGapProbability: 0,
+    readReceiptSkipProbability: 0,
+    readReceiptDelayMinMs: 0,
+    readReceiptDelayMaxMs: 0,
+    enableTypingModel: true,
+    typingWPM: config.typingWPM ?? 45,
+    typingWPMStdDev: 0,
+    thinkPauseProbability: 0,
+    intermittentPausedProbability: 0,
+    typingMinMs: config.typingMinMs ?? 600,
+    typingMaxMs: config.typingMaxMs ?? 8000
+  })
+}
+
 export class SessionManager {
-  constructor({ config, logger, sessionFactory }) {
+  constructor({ config, logger, sessionFactory, presenceChoreographer }) {
     this.logger = logger
+    this.presenceChoreographer =
+      presenceChoreographer ?? createQaPresence(config.presence)
     const createSession =
       sessionFactory ?? ((options) => new WhatsAppSession(options))
     const reconnectOptions = {
@@ -112,7 +140,25 @@ export class SessionManager {
     }
 
     const canonicalRecipientJid = await sender.resolveTargetJid(recipientJid)
-    return sender.sendText(canonicalRecipientJid, text)
+    const normalizedText = String(text ?? "").trim()
+    const plan = this.presenceChoreographer.computeTypingPlan(
+      normalizedText.length
+    )
+
+    if (plan.length > 0) {
+      this.logger.info("session-manager.presence.qa", {
+        sender: senderName,
+        recipient: recipientName,
+        steps: plan.length
+      })
+      await this.presenceChoreographer.executeTypingPlan(
+        sender.socket,
+        canonicalRecipientJid,
+        plan
+      )
+    }
+
+    return sender.sendText(canonicalRecipientJid, normalizedText)
   }
 
   waitForMessageStatus(sessionName, messageId, options = {}) {
