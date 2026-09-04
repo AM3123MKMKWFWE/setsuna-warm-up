@@ -23,6 +23,7 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
     sessionFactory(options) {
       const fake = {
         name: options.name,
+        socket: {},
         started: 0,
         stopped: 0,
         snapshot() {
@@ -88,6 +89,57 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
     ]
   )
   assert.throws(() => manager.get("unknown"), /Session tidak dikenal/)
+})
+
+test("SessionManager menjalankan presence plan sebelum mengirim pesan", async () => {
+  const calls = []
+  const config = loadConfig({}, { cwd: "C:/workspace" })
+  const presenceChoreographer = {
+    computeTypingPlan(length) {
+      calls.push(["compute", length])
+      return [{ state: "composing", durationMs: 100 }]
+    },
+    async executeTypingPlan(socket, jid, plan) {
+      calls.push(["presence", socket.name, jid, plan.length])
+    }
+  }
+
+  const manager = new SessionManager({
+    config,
+    logger: createLogger(),
+    presenceChoreographer,
+    sessionFactory({ name }) {
+      return {
+        name,
+        socket: { name: `${name}-socket` },
+        snapshot: () => ({ name, state: "ready" }),
+        getOwnJid: () =>
+          name === "admin-1"
+            ? "628111111111@s.whatsapp.net"
+            : "628222222222@s.whatsapp.net",
+        async resolveTargetJid(target) {
+          return target
+        },
+        async sendText(target, text) {
+          calls.push(["send", name, target, text])
+          return { target, text }
+        }
+      }
+    }
+  })
+
+  await manager.sendBetween("admin-1", "admin-2", "Halo QA")
+
+  assert.deepEqual(calls, [
+    ["compute", 7],
+    [
+      "presence",
+      "admin-1-socket",
+      "628222222222@s.whatsapp.net",
+      1
+    ],
+    ["send", "admin-1", "628222222222@s.whatsapp.net", "Halo QA"]
+  ])
 })
 
 test("SessionManager menolak dua session dengan akun yang sama", () => {

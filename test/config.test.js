@@ -13,6 +13,10 @@ test("loadConfig menggunakan nilai default Tahap 1 yang aman", () => {
   assert.equal(config.sessionHealth.enabled, true)
   assert.equal(config.sessionHealth.badMacThreshold, 3)
   assert.equal(config.sessionHealth.badMacWindowMs, 60000)
+  assert.equal(config.presence.enabled, false)
+  assert.equal(config.presence.typingWPM, 45)
+  assert.equal(config.presence.typingMinMs, 600)
+  assert.equal(config.presence.typingMaxMs, 8000)
   assert.equal(config.limits.maxConversationSteps, 10)
   assert.equal(config.limits.messageDelayMs, 65000)
   assert.equal(config.limits.deliveryReceiptTimeoutMs, 30000)
@@ -27,6 +31,24 @@ test("konfigurasi session health divalidasi", () => {
   assert.throws(
     () => loadConfig({ SESSION_BAD_MAC_THRESHOLD: "0" }),
     /antara 1 dan 100/
+  )
+})
+
+test("konfigurasi presence QA bersifat opt-in dan tervalidasi", () => {
+  const config = loadConfig({
+    PRESENCE_ENABLED: "true",
+    PRESENCE_TYPING_WPM: "55",
+    PRESENCE_TYPING_MIN_MS: "800",
+    PRESENCE_TYPING_MAX_MS: "5000"
+  })
+
+  assert.equal(config.presence.enabled, true)
+  assert.equal(config.presence.typingWPM, 55)
+  assert.equal(config.presence.typingMinMs, 800)
+  assert.equal(config.presence.typingMaxMs, 5000)
+  assert.throws(
+    () => loadConfig({ PRESENCE_TYPING_WPM: "5" }),
+    /antara 10 dan 120/
   )
 })
 

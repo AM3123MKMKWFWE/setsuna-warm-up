@@ -98,6 +98,30 @@ export function loadConfig(env = process.env, options = {}) {
         max: 3600000
       })
     }),
+    presence: Object.freeze({
+      enabled: parseBoolean(env.PRESENCE_ENABLED, {
+        field: "PRESENCE_ENABLED",
+        fallback: false
+      }),
+      typingWPM: parseInteger(env.PRESENCE_TYPING_WPM, {
+        field: "PRESENCE_TYPING_WPM",
+        fallback: 45,
+        min: 10,
+        max: 120
+      }),
+      typingMinMs: parseInteger(env.PRESENCE_TYPING_MIN_MS, {
+        field: "PRESENCE_TYPING_MIN_MS",
+        fallback: 600,
+        min: 0,
+        max: 10000
+      }),
+      typingMaxMs: parseInteger(env.PRESENCE_TYPING_MAX_MS, {
+        field: "PRESENCE_TYPING_MAX_MS",
+        fallback: 8000,
+        min: 600,
+        max: 30000
+      })
+    }),
     admins: Object.freeze({
       admin1: Object.freeze({
         name: "admin-1",
@@ -184,6 +208,7 @@ export function summarizeConfig(config) {
     whatsappConnectionEnabled: config.whatsappConnectionEnabled,
     showRawQr: config.showRawQr,
     sessionHealth: config.sessionHealth,
+    presence: config.presence,
     limits: config.limits
   }
 }
