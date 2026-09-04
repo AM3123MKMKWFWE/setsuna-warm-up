@@ -3,6 +3,7 @@ export const SESSION_STATE = Object.freeze({
   INITIALIZING: "initializing",
   CONNECTING: "connecting",
   READY: "ready",
+  DEGRADED: "degraded",
   DISCONNECTED: "disconnected",
   RECONNECTING: "reconnecting",
   LOGGED_OUT: "logged-out"

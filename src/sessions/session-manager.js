@@ -18,6 +18,7 @@ export class SessionManager {
           authDirectory: admin.authDirectory,
           logger: logger.child(admin.name),
           showRawQr: config.showRawQr,
+          sessionHealth: config.sessionHealth,
           ...reconnectOptions
         })
         return [admin.name, session]

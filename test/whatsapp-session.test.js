@@ -50,7 +50,8 @@ function createHarness(options = {}) {
     makeSocket: () => socket,
     qrRenderer: async () => {},
     disconnectReason: DisconnectReason,
-    baileysLogger: {}
+    baileysLogger: {},
+    sessionHealth: options.sessionHealth ?? { enabled: false }
   })
 
   return {
@@ -98,6 +99,37 @@ test("session mencapai ready, menyimpan credential, dan mengirim teks", async ()
   assert.equal(harness.session.state, SESSION_STATE.STOPPED)
   assert.equal(harness.session.userJid, null)
   assert.equal(harness.ended, 1)
+})
+
+test("session health menghentikan pengiriman saat Bad MAC melewati ambang", async () => {
+  const harness = createHarness({
+    sessionHealth: {
+      enabled: true,
+      badMacThreshold: 2,
+      badMacWindowMs: 60000
+    }
+  })
+
+  await harness.session.start()
+  harness.socket.ev.emit("connection.update", { connection: "open" })
+  harness.socket.ev.emit("messages.upsert", {
+    messages: [{ message: { conversation: "Pesan valid" } }]
+  })
+  harness.socket.ev.emit("messages.upsert", {
+    messages: [
+      { messageStubType: 2 },
+      { messageStubType: 2 }
+    ]
+  })
+
+  assert.equal(harness.session.state, SESSION_STATE.DEGRADED)
+  assert.equal(harness.session.snapshot().health.decryptSuccess, 1)
+  assert.equal(harness.session.snapshot().health.badMacCount, 2)
+  await assert.rejects(
+    harness.session.sendText("628999999999", "Jangan dikirim"),
+    /state saat ini: degraded/
+  )
+  await harness.session.stop("test")
 })
 
 test("session menolak target yang tidak dapat diverifikasi", async () => {

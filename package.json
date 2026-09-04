@@ -2,7 +2,7 @@
   "name": "whatsapp-multi-session-warm-up",
   "version": "0.1.0",
   "private": true,
-  "description": "Fondasi aplikasi multi-session WhatsApp untuk simulator dan inbound opt-in.",
+  "description": "Simulator percakapan finite antara dua session WhatsApp milik sendiri.",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
@@ -16,6 +16,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "7.0.0-rc14",
+    "baileys-antiban": "4.10.0",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",
     "qrcode-terminal": "^0.12.0"

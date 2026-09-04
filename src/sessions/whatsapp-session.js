@@ -3,9 +3,14 @@ import { EventEmitter } from "node:events"
 import makeWASocket, {
   DisconnectReason,
   jidNormalizedUser,
+  WAMessageStubType,
   WAMessageStatus,
   useMultiFileAuthState
 } from "@whiskeysockets/baileys"
+import {
+  classifyDisconnect,
+  SessionHealthMonitor
+} from "baileys-antiban"
 import pino from "pino"
 
 import { isWhatsAppUserJid, toWhatsAppJid } from "../utils/jid.js"
@@ -35,6 +40,7 @@ export class WhatsAppSession {
   #events = new EventEmitter()
   #makeSocket
   #messageStatuses = new Map()
+  #sessionHealthMonitor = null
   #qrRenderer
   #reconnectTimer = null
   #saveCreds = null
@@ -49,6 +55,7 @@ export class WhatsAppSession {
     this.reconnectBaseDelayMs = options.reconnectBaseDelayMs
     this.reconnectMaxDelayMs = options.reconnectMaxDelayMs
     this.showRawQr = options.showRawQr ?? false
+    const sessionHealth = options.sessionHealth ?? { enabled: true }
     this.state = SESSION_STATE.STOPPED
     this.reconnectAttempt = 0
     this.userJid = null
@@ -57,6 +64,33 @@ export class WhatsAppSession {
     this.#qrRenderer = options.qrRenderer ?? renderTerminalQr
     this.#disconnectReason = options.disconnectReason ?? DisconnectReason
     this.#baileysLogger = options.baileysLogger ?? pino({ level: "silent" })
+
+    if (sessionHealth.enabled !== false) {
+      const createHealthMonitor =
+        options.sessionHealthMonitorFactory ??
+        ((healthOptions) => new SessionHealthMonitor(healthOptions))
+
+      this.#sessionHealthMonitor = createHealthMonitor({
+        badMacThreshold: sessionHealth.badMacThreshold ?? 3,
+        badMacWindowMs: sessionHealth.badMacWindowMs ?? 60000,
+        onDegraded: (stats) => {
+          this.logger.error("session.health.degraded", { stats })
+          if (this.state === SESSION_STATE.READY) {
+            this.#setState(SESSION_STATE.DEGRADED, {
+              reason: "bad-mac-threshold"
+            })
+          }
+        },
+        onRecovered: (stats) => {
+          this.logger.info("session.health.recovered", { stats })
+          if (this.state === SESSION_STATE.DEGRADED && this.#socket !== null) {
+            this.#setState(SESSION_STATE.READY, {
+              reason: "decrypt-health-recovered"
+            })
+          }
+        }
+      })
+    }
   }
 
   get socket() {
@@ -68,7 +102,8 @@ export class WhatsAppSession {
       name: this.name,
       state: this.state,
       reconnectAttempt: this.reconnectAttempt,
-      userJid: this.userJid
+      userJid: this.userJid,
+      health: this.#sessionHealthMonitor?.getStats() ?? null
     }
   }
 
@@ -124,6 +159,7 @@ export class WhatsAppSession {
       this.#saveCreds = saveCreds
       socket.ev.on("creds.update", this.#onCredsUpdate)
       socket.ev.on("connection.update", this.#onConnectionUpdate)
+      socket.ev.on("messages.upsert", this.#onMessagesUpsert)
       socket.ev.on("messages.update", this.#onMessagesUpdate)
       this.logger.info("session.socket.created")
     } catch (error) {
@@ -158,6 +194,7 @@ export class WhatsAppSession {
       this.userJid = connectedJid ? jidNormalizedUser(connectedJid) : null
       this.reconnectAttempt = 0
       this.#clearReconnectTimer()
+      this.#sessionHealthMonitor?.reset()
       this.#setState(SESSION_STATE.READY)
       return
     }
@@ -167,8 +204,26 @@ export class WhatsAppSession {
     }
   }
 
+  #onMessagesUpsert = ({ messages } = {}) => {
+    if (!Array.isArray(messages)) {
+      return
+    }
+
+    for (const message of messages) {
+      if (message?.messageStubType === WAMessageStubType.CIPHERTEXT) {
+        this.#sessionHealthMonitor?.recordDecryptFail(true)
+      } else if (message?.message) {
+        this.#sessionHealthMonitor?.recordDecryptSuccess()
+      }
+    }
+  }
+
   #onMessagesUpdate = (updates) => {
     for (const item of updates) {
+      if (item?.update?.messageStubType === WAMessageStubType.CIPHERTEXT) {
+        this.#sessionHealthMonitor?.recordDecryptFail(true)
+      }
+
       const messageId = item?.key?.id
       const status = item?.update?.status
 
@@ -209,11 +264,16 @@ export class WhatsAppSession {
     const statusCode = getDisconnectStatusCode(lastDisconnect?.error)
     const conflictType = getDisconnectConflictType(lastDisconnect?.error)
     const reason = getDisconnectReasonName(statusCode, this.#disconnectReason)
+    const classification = Number.isInteger(statusCode)
+      ? classifyDisconnect(statusCode)
+      : null
 
     this.logger.warn("session.connection.closed", {
       statusCode,
       reason,
-      conflictType
+      conflictType,
+      disconnectCategory: classification?.category ?? "unknown",
+      recommendedBackoffMs: classification?.backoffMs ?? null
     })
 
     if (!shouldReconnect(statusCode, this.#disconnectReason)) {
@@ -222,10 +282,10 @@ export class WhatsAppSession {
     }
 
     this.#setState(SESSION_STATE.DISCONNECTED, { reason, statusCode })
-    this.#scheduleReconnect()
+    this.#scheduleReconnect(classification?.backoffMs)
   }
 
-  #scheduleReconnect() {
+  #scheduleReconnect(recommendedBackoffMs = 0) {
     if (this.#stopping || this.#reconnectTimer !== null) {
       return
     }
@@ -241,10 +301,13 @@ export class WhatsAppSession {
     }
 
     this.reconnectAttempt = nextAttempt
-    const delayMs = calculateReconnectDelay(nextAttempt, {
-      baseDelayMs: this.reconnectBaseDelayMs,
-      maxDelayMs: this.reconnectMaxDelayMs
-    })
+    const delayMs = Math.max(
+      calculateReconnectDelay(nextAttempt, {
+        baseDelayMs: this.reconnectBaseDelayMs,
+        maxDelayMs: this.reconnectMaxDelayMs
+      }),
+      Number.isFinite(recommendedBackoffMs) ? recommendedBackoffMs : 0
+    )
 
     this.logger.info("session.reconnect.scheduled", {
       attempt: nextAttempt,
@@ -267,6 +330,7 @@ export class WhatsAppSession {
   #detachSocket(socket) {
     socket?.ev?.off("creds.update", this.#onCredsUpdate)
     socket?.ev?.off("connection.update", this.#onConnectionUpdate)
+    socket?.ev?.off("messages.upsert", this.#onMessagesUpsert)
     socket?.ev?.off("messages.update", this.#onMessagesUpdate)
   }
 
@@ -290,6 +354,7 @@ export class WhatsAppSession {
 
     if (
       this.state === SESSION_STATE.LOGGED_OUT ||
+      this.state === SESSION_STATE.DEGRADED ||
       this.state === SESSION_STATE.STOPPED
     ) {
       return Promise.reject(new SessionNotReadyError(this.name, this.state))
@@ -313,6 +378,7 @@ export class WhatsAppSession {
           resolve(snapshot)
         } else if (
           snapshot.state === SESSION_STATE.LOGGED_OUT ||
+          snapshot.state === SESSION_STATE.DEGRADED ||
           snapshot.state === SESSION_STATE.STOPPED
         ) {
           cleanup()
@@ -463,6 +529,7 @@ export class WhatsAppSession {
     this.#saveCreds = null
     this.userJid = null
     this.#messageStatuses.clear()
+    this.#sessionHealthMonitor?.reset()
     this.#setState(SESSION_STATE.STOPPED, { reason })
 
     if (socket?.end) {

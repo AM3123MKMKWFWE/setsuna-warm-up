@@ -1,6 +1,6 @@
 import path from "node:path"
 
-const APP_MODES = new Set(["conversation", "inbound"])
+const APP_MODES = new Set(["conversation"])
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"])
 
 export class ConfigurationError extends Error {
@@ -57,34 +57,6 @@ function parseDirectory(value, fallback, field, cwd) {
   return path.resolve(cwd, directory)
 }
 
-function parseInviteUrl(value) {
-  const normalized = String(value ?? "").trim()
-
-  if (normalized === "") {
-    return null
-  }
-
-  let url
-
-  try {
-    url = new URL(normalized)
-  } catch {
-    throw new ConfigurationError(
-      "COMMUNITY_INVITE_URL harus berupa URL yang valid",
-      "COMMUNITY_INVITE_URL"
-    )
-  }
-
-  if (url.protocol !== "https:" || url.hostname !== "chat.whatsapp.com") {
-    throw new ConfigurationError(
-      "COMMUNITY_INVITE_URL harus menggunakan https://chat.whatsapp.com/",
-      "COMMUNITY_INVITE_URL"
-    )
-  }
-
-  return url.toString()
-}
-
 export function loadConfig(env = process.env, options = {}) {
   const cwd = options.cwd ?? process.cwd()
   const mode = parseEnum(env.APP_MODE, {
@@ -97,23 +69,6 @@ export function loadConfig(env = process.env, options = {}) {
     allowed: LOG_LEVELS,
     fallback: "info"
   })
-  const communityInviteUrl = parseInviteUrl(env.COMMUNITY_INVITE_URL)
-  const inboundTrigger = String(env.INBOUND_TRIGGER ?? "").trim()
-
-  if (mode === "inbound" && communityInviteUrl === null) {
-    throw new ConfigurationError(
-      "COMMUNITY_INVITE_URL wajib diisi ketika APP_MODE=inbound",
-      "COMMUNITY_INVITE_URL"
-    )
-  }
-
-  if (mode === "inbound" && inboundTrigger === "") {
-    throw new ConfigurationError(
-      "INBOUND_TRIGGER wajib diisi ketika APP_MODE=inbound",
-      "INBOUND_TRIGGER"
-    )
-  }
-
   return Object.freeze({
     mode,
     logLevel,
@@ -124,6 +79,24 @@ export function loadConfig(env = process.env, options = {}) {
     showRawQr: parseBoolean(env.WA_QR_SHOW_RAW, {
       field: "WA_QR_SHOW_RAW",
       fallback: false
+    }),
+    sessionHealth: Object.freeze({
+      enabled: parseBoolean(env.SESSION_HEALTH_ENABLED, {
+        field: "SESSION_HEALTH_ENABLED",
+        fallback: true
+      }),
+      badMacThreshold: parseInteger(env.SESSION_BAD_MAC_THRESHOLD, {
+        field: "SESSION_BAD_MAC_THRESHOLD",
+        fallback: 3,
+        min: 1,
+        max: 100
+      }),
+      badMacWindowMs: parseInteger(env.SESSION_BAD_MAC_WINDOW_MS, {
+        field: "SESSION_BAD_MAC_WINDOW_MS",
+        fallback: 60000,
+        min: 1000,
+        max: 3600000
+      })
     }),
     admins: Object.freeze({
       admin1: Object.freeze({
@@ -145,10 +118,6 @@ export function loadConfig(env = process.env, options = {}) {
         )
       })
     }),
-    inbound: Object.freeze({
-      communityInviteUrl,
-      trigger: inboundTrigger
-    }),
     limits: Object.freeze({
       maxConversationSteps: parseInteger(env.MAX_CONVERSATION_STEPS, {
         field: "MAX_CONVERSATION_STEPS",
@@ -161,18 +130,6 @@ export function loadConfig(env = process.env, options = {}) {
         fallback: 65000,
         min: 0,
         max: 300000
-      }),
-      queueMaxSize: parseInteger(env.QUEUE_MAX_SIZE, {
-        field: "QUEUE_MAX_SIZE",
-        fallback: 100,
-        min: 1,
-        max: 10000
-      }),
-      sendRetryLimit: parseInteger(env.SEND_RETRY_LIMIT, {
-        field: "SEND_RETRY_LIMIT",
-        fallback: 3,
-        min: 0,
-        max: 10
       }),
       reconnectLimit: parseInteger(env.RECONNECT_LIMIT, {
         field: "RECONNECT_LIMIT",
@@ -226,8 +183,7 @@ export function summarizeConfig(config) {
     logLevel: config.logLevel,
     whatsappConnectionEnabled: config.whatsappConnectionEnabled,
     showRawQr: config.showRawQr,
-    inboundConfigured:
-      config.inbound.communityInviteUrl !== null && config.inbound.trigger !== "",
+    sessionHealth: config.sessionHealth,
     limits: config.limits
   }
 }

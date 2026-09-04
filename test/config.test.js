@@ -10,10 +10,24 @@ test("loadConfig menggunakan nilai default Tahap 1 yang aman", () => {
   assert.equal(config.logLevel, "info")
   assert.equal(config.whatsappConnectionEnabled, false)
   assert.equal(config.showRawQr, false)
+  assert.equal(config.sessionHealth.enabled, true)
+  assert.equal(config.sessionHealth.badMacThreshold, 3)
+  assert.equal(config.sessionHealth.badMacWindowMs, 60000)
   assert.equal(config.limits.maxConversationSteps, 10)
   assert.equal(config.limits.messageDelayMs, 65000)
   assert.equal(config.limits.deliveryReceiptTimeoutMs, 30000)
   assert.equal("adminNumbersConfigured" in summarizeConfig(config), false)
+})
+
+test("konfigurasi session health divalidasi", () => {
+  assert.equal(
+    loadConfig({ SESSION_HEALTH_ENABLED: "false" }).sessionHealth.enabled,
+    false
+  )
+  assert.throws(
+    () => loadConfig({ SESSION_BAD_MAC_THRESHOLD: "0" }),
+    /antara 1 dan 100/
+  )
 })
 
 test("loadConfig menolak mode yang tidak didukung", () => {
@@ -22,31 +36,11 @@ test("loadConfig menolak mode yang tidak didukung", () => {
     (error) =>
       error instanceof ConfigurationError && error.field === "APP_MODE"
   )
-})
-
-test("mode inbound mewajibkan trigger dan tautan resmi WhatsApp", () => {
   assert.throws(
     () => loadConfig({ APP_MODE: "inbound" }),
-    /COMMUNITY_INVITE_URL wajib/
+    (error) =>
+      error instanceof ConfigurationError && error.field === "APP_MODE"
   )
-
-  assert.throws(
-    () =>
-      loadConfig({
-        APP_MODE: "inbound",
-        COMMUNITY_INVITE_URL: "https://example.com/invite",
-        INBOUND_TRIGGER: "JOIN"
-      }),
-    /chat\.whatsapp\.com/
-  )
-
-  const config = loadConfig({
-    APP_MODE: "inbound",
-    COMMUNITY_INVITE_URL: "https://chat.whatsapp.com/example-code",
-    INBOUND_TRIGGER: "JOIN"
-  })
-
-  assert.equal(config.inbound.trigger, "JOIN")
 })
 
 test("batas numerik divalidasi", () => {
