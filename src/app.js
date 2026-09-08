@@ -7,7 +7,24 @@ import { createShutdownManager } from "./utils/shutdown.js"
 
 async function main() {
   const config = loadConfig()
-  const logger = createLogger({ level: config.logLevel })
+  const logger = createLogger({
+    level: config.logLevel,
+    fileLogging: {
+      enabled: config.logging.toFileEnabled,
+      directory: config.logging.directory
+    },
+    onFileError: (error) => {
+      console.error(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "error",
+          context: "app",
+          event: "logger.file-write.failed",
+          message: error.message
+        })
+      )
+    }
+  })
   const restoreConsole = installSensitiveConsoleGuard({ logger })
   const shutdownManager = createShutdownManager({ logger })
   const removeSignalHandlers = shutdownManager.installSignalHandlers()

@@ -13,9 +13,9 @@ import { MessageDeliveryTimeoutError } from "../src/sessions/session-state.js"
 
 function createLogger() {
   return {
-    info() {},
-    warn() {},
-    error() {}
+    info() { },
+    warn() { },
+    error() { }
   }
 }
 
@@ -56,28 +56,42 @@ function createManager() {
   }
 }
 
-test("skenario default memakai jeda konfigurasi dan sepuluh langkah finite", () => {
+// test("skenario default memakai jeda konfigurasi dan sepuluh langkah finite", () => {
+//   const scenario = createDefaultConversationScenario(65000)
+
+//   assert.equal(scenario.length, 10)
+//   assert.deepEqual(
+//     scenario.map((step) => step.sender),
+//     [
+//       "admin-1",
+//       "admin-2",
+//       "admin-1",
+//       "admin-2",
+//       "admin-1",
+//       "admin-2",
+//       "admin-1",
+//       "admin-2",
+//       "admin-1",
+//       "admin-2"
+//     ]
+//   )
+//   assert.deepEqual(
+//     scenario.map((step) => step.delayMs),
+//     [0, 65000, 65000, 65000, 65000, 65000, 65000, 65000, 65000, 65000]
+//   )
+// })
+
+test("skenario default memakai jeda konfigurasi dan empat langkah finite", () => {
   const scenario = createDefaultConversationScenario(65000)
 
-  assert.equal(scenario.length, 10)
+  assert.equal(scenario.length, 4)
   assert.deepEqual(
     scenario.map((step) => step.sender),
-    [
-      "admin-1",
-      "admin-2",
-      "admin-1",
-      "admin-2",
-      "admin-1",
-      "admin-2",
-      "admin-1",
-      "admin-2",
-      "admin-1",
-      "admin-2"
-    ]
+    ["admin-1", "admin-2", "admin-1", "admin-2"]
   )
   assert.deepEqual(
     scenario.map((step) => step.delayMs),
-    [0, 65000, 65000, 65000, 65000, 65000, 65000, 65000, 65000, 65000]
+    [0, 65000, 65000, 65000]
   )
 })
 
@@ -210,7 +224,7 @@ test("runner tetap melanjutkan skenario ketika delivery receipt timeout", async 
   const runner = createConversationRunner({
     sessionManager: manager,
     logger: createLogger(),
-    wait: async () => {}
+    wait: async () => { }
   })
 
   const result = await runner.run(
@@ -234,7 +248,7 @@ test("runner menghormati AbortSignal sebelum percakapan dimulai", async () => {
   const runner = createConversationRunner({
     sessionManager: manager,
     logger: createLogger(),
-    wait: async () => {}
+    wait: async () => { }
   })
 
   await assert.rejects(

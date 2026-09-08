@@ -1,9 +1,21 @@
+import fs from "node:fs"
+import path from "node:path"
+
 const LOG_LEVEL_PRIORITY = Object.freeze({
   debug: 10,
   info: 20,
   warn: 30,
   error: 40
 })
+
+function defaultAppendLine(filePath, line) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.appendFileSync(filePath, `${line}\n`, "utf8")
+}
+
+function dailyFileName(date) {
+  return `app-${date.toISOString().slice(0, 10)}.log`
+}
 
 const SENSITIVE_KEY_PATTERN =
   /(auth|credential|password|secret|token|pairing|qr|invite.*url)/i
@@ -63,9 +75,33 @@ export function createLogger(options = {}) {
   const level = options.level ?? "info"
   const context = options.context ?? "app"
   const sink = options.sink ?? console
+  const fileLoggingEnabled = options.fileLogging?.enabled ?? false
+  const fileDirectory = options.fileLogging?.directory ?? null
+  const now = options.now ?? (() => new Date())
+  const appendLine = options.appendLine ?? defaultAppendLine
+  const onFileError = options.onFileError ?? null
 
   if (!(level in LOG_LEVEL_PRIORITY)) {
     throw new TypeError(`Level log tidak didukung: ${level}`)
+  }
+
+  if (fileLoggingEnabled && !fileDirectory) {
+    throw new TypeError("fileLogging.directory wajib diisi saat fileLogging.enabled true")
+  }
+
+  function writeToFile(output) {
+    if (!fileLoggingEnabled) {
+      return
+    }
+
+    try {
+      const filePath = path.join(fileDirectory, dailyFileName(now()))
+      appendLine(filePath, output)
+    } catch (error) {
+      if (typeof onFileError === "function") {
+        onFileError(error)
+      }
+    }
   }
 
   function write(messageLevel, event, metadata) {
@@ -88,6 +124,8 @@ export function createLogger(options = {}) {
     } else {
       sink.log(output)
     }
+
+    writeToFile(output)
   }
 
   return Object.freeze({
@@ -99,7 +137,11 @@ export function createLogger(options = {}) {
       return createLogger({
         level,
         context: `${context}:${childContext}`,
-        sink
+        sink,
+        fileLogging: { enabled: fileLoggingEnabled, directory: fileDirectory },
+        now,
+        appendLine,
+        onFileError
       })
     }
   })

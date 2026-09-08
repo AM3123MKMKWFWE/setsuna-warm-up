@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import test from "node:test"
 
 import {
@@ -38,4 +39,99 @@ test("logger menghormati level minimum", () => {
 
   assert.equal(output.length, 1)
   assert.equal(JSON.parse(output[0]).phoneNumber, "628*******89")
+})
+
+test("file logging nonaktif secara default: appendLine tidak pernah dipanggil", () => {
+  const appendCalls = []
+  const sink = { log() {}, info() {}, warn() {}, error() {} }
+  const logger = createLogger({
+    level: "info",
+    sink,
+    appendLine: (filePath, line) => appendCalls.push({ filePath, line })
+  })
+
+  logger.info("some-event")
+
+  assert.equal(appendCalls.length, 0)
+})
+
+test("file logging aktif menulis satu baris JSON per hari ke direktori terkonfigurasi", () => {
+  const appendCalls = []
+  const sink = { log() {}, info() {}, warn() {}, error() {} }
+  const logger = createLogger({
+    level: "info",
+    sink,
+    fileLogging: { enabled: true, directory: "/var/logs/setsuna" },
+    now: () => new Date("2026-09-05T10:00:00.000Z"),
+    appendLine: (filePath, line) => appendCalls.push({ filePath, line })
+  })
+
+  logger.info("session.socket.created", { phoneNumber: "628123456789" })
+
+  assert.equal(appendCalls.length, 1)
+  assert.equal(
+    appendCalls[0].filePath,
+    path.join("/var/logs/setsuna", "app-2026-09-05.log")
+  )
+  const parsed = JSON.parse(appendCalls[0].line)
+  assert.equal(parsed.event, "session.socket.created")
+  assert.equal(parsed.phoneNumber, "628*******89")
+})
+
+test("file logging menghormati level minimum yang sama dengan console", () => {
+  const appendCalls = []
+  const logger = createLogger({
+    level: "warn",
+    sink: { log() {}, info() {}, warn() {}, error() {} },
+    fileLogging: { enabled: true, directory: "/var/logs/setsuna" },
+    now: () => new Date("2026-09-05T10:00:00.000Z"),
+    appendLine: (filePath, line) => appendCalls.push({ filePath, line })
+  })
+
+  logger.info("ignored")
+  logger.error("included")
+
+  assert.equal(appendCalls.length, 1)
+  assert.equal(JSON.parse(appendCalls[0].line).event, "included")
+})
+
+test("kegagalan menulis file tidak melempar error dan memanggil onFileError", () => {
+  const fileErrors = []
+  const logger = createLogger({
+    level: "info",
+    sink: { log() {}, info() {}, warn() {}, error() {} },
+    fileLogging: { enabled: true, directory: "/var/logs/setsuna" },
+    now: () => new Date("2026-09-05T10:00:00.000Z"),
+    appendLine: () => {
+      throw new Error("disk penuh")
+    },
+    onFileError: (error) => fileErrors.push(error.message)
+  })
+
+  assert.doesNotThrow(() => logger.info("some-event"))
+  assert.deepEqual(fileErrors, ["disk penuh"])
+})
+
+test("child logger mewarisi konfigurasi file logging dari parent", () => {
+  const appendCalls = []
+  const logger = createLogger({
+    level: "info",
+    sink: { log() {}, info() {}, warn() {}, error() {} },
+    fileLogging: { enabled: true, directory: "/var/logs/setsuna" },
+    now: () => new Date("2026-09-05T10:00:00.000Z"),
+    appendLine: (filePath, line) => appendCalls.push({ filePath, line })
+  })
+  const child = logger.child("admin-1")
+
+  child.info("session.socket.created")
+
+  assert.equal(appendCalls.length, 1)
+  assert.equal(JSON.parse(appendCalls[0].line).context, "app:admin-1")
+})
+
+test("fileLogging.enabled true tanpa directory melempar error konfigurasi", () => {
+  assert.throws(
+    () => createLogger({ fileLogging: { enabled: true } }),
+    /fileLogging.directory wajib diisi/
+  )
 })

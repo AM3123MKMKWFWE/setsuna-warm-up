@@ -9,11 +9,21 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys"
 import {
   classifyDisconnect,
-  SessionHealthMonitor
+  SessionHealthMonitor,
+  generateFingerprint,
+  applyFingerprint,
+  getStealthSocketConfig,
+  rampPresenceAfterConnect,
+  AbortError,
+  readReceiptVariance,
+  generateSessionFingerprint,
+  applySessionFingerprint,
+  getRetryJitter,
 } from "baileys-antiban"
 import pino from "pino"
 
 import { isWhatsAppUserJid, toWhatsAppJid } from "../utils/jid.js"
+import { createHumanEntropyService } from "./human-entropy.js"
 import { OperationAbortedError } from "../utils/sleep.js"
 import {
   calculateReconnectDelay,
@@ -41,11 +51,25 @@ export class WhatsAppSession {
   #makeSocket
   #messageStatuses = new Map()
   #sessionHealthMonitor = null
+  #humanEntropy = null
+  #humanEntropyFactory
   #qrRenderer
   #reconnectTimer = null
   #saveCreds = null
   #socket = null
   #stopping = false
+  #generateFingerprint
+  #applyFingerprint
+  #getStealthSocketConfig
+  #rampPresenceAfterConnect
+  #readReceiptVariance
+  #generateSessionFingerprint
+  #applySessionFingerprint
+  #getRetryJitter
+  #fingerprint = null
+  #sessionFingerprint = null
+  #presenceRampController = null
+  #readReceiptVarianceController = null
 
   constructor(options) {
     this.name = options.name
@@ -56,6 +80,24 @@ export class WhatsAppSession {
     this.reconnectMaxDelayMs = options.reconnectMaxDelayMs
     this.showRawQr = options.showRawQr ?? false
     const sessionHealth = options.sessionHealth ?? { enabled: true }
+    this.sessionHealthConfig = sessionHealth
+    this.humanEntropyConfig = options.humanEntropy ?? { enabled: false }
+    this.deviceFingerprintConfig = options.deviceFingerprint ?? {
+      enabled: false
+    }
+    this.stealthConnectConfig = options.stealthConnect ?? {
+      enabled: false,
+      presenceRampMinMs: 30000,
+      presenceRampMaxMs: 90000
+    }
+    this.readReceiptVarianceConfig = options.readReceiptVariance ?? {
+      enabled: false,
+      meanMs: 1500,
+      stdDevMs: 800
+    }
+    this.sessionFingerprintConfig = options.sessionFingerprint ?? {
+      enabled: false
+    }
     this.state = SESSION_STATE.STOPPED
     this.reconnectAttempt = 0
     this.userJid = null
@@ -64,6 +106,20 @@ export class WhatsAppSession {
     this.#qrRenderer = options.qrRenderer ?? renderTerminalQr
     this.#disconnectReason = options.disconnectReason ?? DisconnectReason
     this.#baileysLogger = options.baileysLogger ?? pino({ level: "silent" })
+    this.#generateFingerprint = options.generateFingerprint ?? generateFingerprint
+    this.#applyFingerprint = options.applyFingerprint ?? applyFingerprint
+    this.#getStealthSocketConfig =
+      options.getStealthSocketConfig ?? getStealthSocketConfig
+    this.#rampPresenceAfterConnect =
+      options.rampPresenceAfterConnect ?? rampPresenceAfterConnect
+    this.#readReceiptVariance = options.readReceiptVarianceFactory ?? readReceiptVariance
+    this.#generateSessionFingerprint =
+      options.generateSessionFingerprint ?? generateSessionFingerprint
+    this.#applySessionFingerprint =
+      options.applySessionFingerprint ?? applySessionFingerprint
+    this.#getRetryJitter = options.getRetryJitter ?? getRetryJitter
+    this.#humanEntropyFactory =
+      options.humanEntropyFactory ?? createHumanEntropyService
 
     if (sessionHealth.enabled !== false) {
       const createHealthMonitor =
@@ -103,7 +159,18 @@ export class WhatsAppSession {
       state: this.state,
       reconnectAttempt: this.reconnectAttempt,
       userJid: this.userJid,
-      health: this.#sessionHealthMonitor?.getStats() ?? null
+      health: this.#sessionHealthMonitor?.getStats() ?? null,
+      humanEntropy: {
+        enabled: this.humanEntropyConfig.enabled === true,
+        ...(this.#humanEntropy?.getStats?.() ?? { running: false })
+      },
+      fingerprint: this.#fingerprint
+        ? {
+            deviceModel: this.#fingerprint.deviceModel,
+            osVersion: this.#fingerprint.osVersion,
+            appVersion: this.#fingerprint.appVersion.join(".")
+          }
+        : null
     }
   }
 
@@ -123,6 +190,24 @@ export class WhatsAppSession {
 
     this.#stopping = false
     this.reconnectAttempt = 0
+    this.logger.info("session.features.configured", {
+      sessionHealth: {
+        enabled: this.sessionHealthConfig.enabled !== false,
+        badMacThreshold: this.sessionHealthConfig.badMacThreshold ?? 3,
+        badMacWindowMs: this.sessionHealthConfig.badMacWindowMs ?? 60000
+      },
+      humanEntropy: {
+        enabled: this.humanEntropyConfig.enabled === true,
+        minIntervalMs: this.humanEntropyConfig.minIntervalMs ?? 300000,
+        maxIntervalMs: this.humanEntropyConfig.maxIntervalMs ?? 900000
+      },
+      deviceFingerprintEnabled: this.deviceFingerprintConfig.enabled === true,
+      stealthConnectEnabled: this.stealthConnectConfig.enabled === true,
+      readReceiptVarianceEnabled:
+        this.readReceiptVarianceConfig.enabled === true,
+      sessionFingerprintEnabled:
+        this.sessionFingerprintConfig.enabled === true
+    })
     this.#setState(SESSION_STATE.INITIALIZING)
     await this.#connect()
     return this.snapshot()
@@ -148,12 +233,89 @@ export class WhatsAppSession {
         return
       }
 
-      const socket = this.#makeSocket({
+      let socketConfig = {
         auth: state,
         logger: this.#baileysLogger,
         markOnlineOnConnect: false,
         syncFullHistory: false
-      })
+      }
+
+      // Stealth connect: randomized browser tuple from a small realistic
+      // pool, plus (later) a delayed presence ramp once connected. Only the
+      // browser tuple is applied here; `markOnlineOnConnect: false` above
+      // already covers "don't snap online immediately".
+      if (this.stealthConnectConfig.enabled === true) {
+        socketConfig = {
+          ...socketConfig,
+          ...this.#getStealthSocketConfig()
+        }
+      }
+
+      // Device fingerprint randomization: stable per session name (so the
+      // same admin keeps the same fingerprint across restarts instead of
+      // re-pairing looking suspicious), distinct between admin-1/admin-2.
+      // Runs after stealth connect, so its browser tuple (mobile-style
+      // [deviceModel, osVersion, WhatsApp/version]) takes precedence over
+      // the stealth-connect browser tuple when both are enabled.
+      if (this.deviceFingerprintConfig.enabled === true) {
+        this.#fingerprint = this.#generateFingerprint({}, this.name)
+        socketConfig = this.#applyFingerprint(socketConfig, this.#fingerprint)
+        // baileys-antiban's applyFingerprint() also sets socketConfig.version
+        // to fp.appVersion (a mobile-app-style [major, minor, patch, build]
+        // number, e.g. [2, 24, 5, 18]). That field is NOT the mobile app
+        // version -- it is Baileys' WA multi-device PROTOCOL version
+        // ([2, 3000, buildNumber] scheme), and baileys-antiban's hardcoded
+        // pool is stale. Sending it as-is gets the connection killed
+        // immediately by WhatsApp with a fatal disconnect (observed as
+        // statusCode 405 on every reconnect attempt until the limit is
+        // exhausted). Drop it so makeWASocket() falls back to Baileys' own
+        // correct built-in version; only the (cosmetic, safe) browser tuple
+        // from the fingerprint is kept.
+        delete socketConfig.version
+        this.logger.info("session.fingerprint.applied", {
+          deviceModel: this.#fingerprint.deviceModel,
+          osVersion: this.#fingerprint.osVersion,
+          appVersion: this.#fingerprint.appVersion.join(".")
+        })
+      }
+
+      // Session fingerprint (Obscura-inspired): superset of device
+      // fingerprint that additionally randomizes-but-stabilizes network
+      // timing jitter, voice-note metadata, and battery/connection state.
+      // Runs after (and overrides) plain device fingerprint's browser/version
+      // fields when both are enabled — SESSION_FINGERPRINT_ENABLED alone is
+      // enough, DEVICE_FINGERPRINT_ENABLED does not need to also be on.
+      if (this.sessionFingerprintConfig.enabled === true) {
+        this.#sessionFingerprint = this.#generateSessionFingerprint({}, this.name)
+        socketConfig = this.#applySessionFingerprint(
+          socketConfig,
+          this.#sessionFingerprint
+        )
+        // Same stale-version problem as applyFingerprint() above --
+        // applySessionFingerprint() also overwrites socketConfig.version with
+        // fingerprint.device.appVersion. Drop it for the same reason.
+        delete socketConfig.version
+        this.#fingerprint = this.#sessionFingerprint.device
+        this.logger.info("session.session-fingerprint.applied", {
+          deviceModel: this.#sessionFingerprint.device.deviceModel,
+          osVersion: this.#sessionFingerprint.device.osVersion,
+          protocolVersion: this.#sessionFingerprint.protocolVersion
+        })
+      }
+
+      let socket = this.#makeSocket(socketConfig)
+
+      // Read receipt variance: proxies `sock.readMessages` so any read
+      // receipt this session sends goes out with Gaussian-jittered delay
+      // instead of instantly. No-op until something calls readMessages().
+      this.#stopReadReceiptVariance()
+      if (this.readReceiptVarianceConfig.enabled === true) {
+        this.#readReceiptVarianceController = this.#readReceiptVariance({
+          meanMs: this.readReceiptVarianceConfig.meanMs,
+          stdDevMs: this.readReceiptVarianceConfig.stdDevMs
+        })
+        socket = this.#readReceiptVarianceController.wrap(socket)
+      }
 
       this.#socket = socket
       this.#saveCreds = saveCreds
@@ -195,7 +357,17 @@ export class WhatsAppSession {
       this.reconnectAttempt = 0
       this.#clearReconnectTimer()
       this.#sessionHealthMonitor?.reset()
+      this.#startHumanEntropy()
+      this.#startPresenceRamp()
       this.#setState(SESSION_STATE.READY)
+      this.logger.info("session.ready.summary", {
+        health: this.#sessionHealthMonitor?.getStats() ?? null,
+        humanEntropy:
+          this.#humanEntropy?.getStats?.() ?? {
+            enabled: this.humanEntropyConfig.enabled === true,
+            running: false
+          }
+      })
       return
     }
 
@@ -209,19 +381,57 @@ export class WhatsAppSession {
       return
     }
 
+    let decryptSuccess = 0
+    let decryptFail = 0
+    let inboundContactsTracked = 0
+
     for (const message of messages) {
       if (message?.messageStubType === WAMessageStubType.CIPHERTEXT) {
         this.#sessionHealthMonitor?.recordDecryptFail(true)
+        decryptFail += 1
       } else if (message?.message) {
         this.#sessionHealthMonitor?.recordDecryptSuccess()
+        decryptSuccess += 1
       }
+
+      const remoteJid = message?.key?.remoteJid
+      if (remoteJid && message?.key?.fromMe !== true) {
+        // Optional call (?.()) because the real baileys-antiban
+        // HumanEntropyService exposes no such public method -- this line
+        // predates a correct reading of that library's actual API (see
+        // BUG-004). Guarded so a mismatched/injected entropy object can
+        // never crash message handling either.
+        try {
+          this.#humanEntropy?.addRecentContact?.(remoteJid, message.key)
+          if (this.#humanEntropy?.addRecentContact) {
+            inboundContactsTracked += 1
+          }
+        } catch (error) {
+          this.logger.warn("session.human-entropy.track-contact-failed", {
+            error
+          })
+        }
+      }
+    }
+
+    if (decryptSuccess > 0 || decryptFail > 0) {
+      this.logger.info("session.health.observed", {
+        batchSize: messages.length,
+        decryptSuccess,
+        decryptFail,
+        stats: this.#sessionHealthMonitor?.getStats() ?? null,
+        inboundContactsTracked
+      })
     }
   }
 
   #onMessagesUpdate = (updates) => {
+    let decryptFail = 0
+
     for (const item of updates) {
       if (item?.update?.messageStubType === WAMessageStubType.CIPHERTEXT) {
         this.#sessionHealthMonitor?.recordDecryptFail(true)
+        decryptFail += 1
       }
 
       const messageId = item?.key?.id
@@ -249,6 +459,13 @@ export class WhatsAppSession {
         status: nextStatus
       })
     }
+
+    if (decryptFail > 0) {
+      this.logger.warn("session.health.decrypt-failure-update", {
+        decryptFail,
+        stats: this.#sessionHealthMonitor?.getStats() ?? null
+      })
+    }
   }
 
   #handleConnectionClose(lastDisconnect) {
@@ -257,6 +474,9 @@ export class WhatsAppSession {
     }
 
     const closedSocket = this.#socket
+    this.#stopHumanEntropy()
+    this.#stopPresenceRamp()
+    this.#stopReadReceiptVariance()
     this.#detachSocket(closedSocket)
     this.#socket = null
     this.#saveCreds = null
@@ -301,13 +521,21 @@ export class WhatsAppSession {
     }
 
     this.reconnectAttempt = nextAttempt
-    const delayMs = Math.max(
-      calculateReconnectDelay(nextAttempt, {
-        baseDelayMs: this.reconnectBaseDelayMs,
-        maxDelayMs: this.reconnectMaxDelayMs
-      }),
-      Number.isFinite(recommendedBackoffMs) ? recommendedBackoffMs : 0
-    )
+    // Session fingerprint's retry jitter (stable per session, ±50% of a
+    // per-session base) avoids every reconnect landing on the exact same
+    // exponential-backoff schedule as every other session.
+    const retryJitterMs =
+      this.sessionFingerprintConfig.enabled === true && this.#sessionFingerprint
+        ? this.#getRetryJitter(this.#sessionFingerprint)
+        : 0
+    const delayMs =
+      Math.max(
+        calculateReconnectDelay(nextAttempt, {
+          baseDelayMs: this.reconnectBaseDelayMs,
+          maxDelayMs: this.reconnectMaxDelayMs
+        }),
+        Number.isFinite(recommendedBackoffMs) ? recommendedBackoffMs : 0
+      ) + retryJitterMs
 
     this.logger.info("session.reconnect.scheduled", {
       attempt: nextAttempt,
@@ -515,6 +743,97 @@ export class WhatsAppSession {
 
     return this.userJid
   }
+  #startHumanEntropy() {
+    this.#stopHumanEntropy()
+
+    if (this.humanEntropyConfig.enabled !== true || this.#socket === null) {
+      return
+    }
+
+    // Defensive: the entropy factory (default: our own createHumanEntropyService,
+    // see human-entropy.js and BUG-004) or any injected replacement must
+    // never be able to take down the whole session/process. It is a
+    // best-effort QA nicety, not a critical path -- a broken integration
+    // should degrade to "entropy disabled for this connection", not crash
+    // conversation runs that have nothing to do with it.
+    try {
+      this.#humanEntropy = this.#humanEntropyFactory(this.#socket, {
+        enabled: true,
+        minIntervalMs: this.humanEntropyConfig.minIntervalMs ?? 300000,
+        maxIntervalMs: this.humanEntropyConfig.maxIntervalMs ?? 900000,
+        logger: this.logger
+      })
+      this.#humanEntropy.start()
+      this.logger.info("session.human-entropy.started")
+    } catch (error) {
+      this.#humanEntropy = null
+      this.logger.error("session.human-entropy.start-failed", { error })
+    }
+  }
+
+  #stopHumanEntropy() {
+    if (this.#humanEntropy == null) {
+      return
+    }
+
+    try {
+      this.#humanEntropy.stop()
+    } catch (error) {
+      this.logger.warn("session.human-entropy.stop-failed", { error })
+    }
+
+    this.#humanEntropy = null
+  }
+
+  #startPresenceRamp() {
+    this.#stopPresenceRamp()
+
+    if (this.stealthConnectConfig.enabled !== true || this.#socket === null) {
+      return
+    }
+
+    const controller = new AbortController()
+    this.#presenceRampController = controller
+    const socket = this.#socket
+
+    this.#rampPresenceAfterConnect(socket, {
+      minDelayMs: this.stealthConnectConfig.presenceRampMinMs,
+      maxDelayMs: this.stealthConnectConfig.presenceRampMaxMs,
+      signal: controller.signal
+    })
+      .then(() => {
+        this.logger.info("session.presence-ramp.completed")
+      })
+      .catch((error) => {
+        if (error instanceof AbortError) {
+          return
+        }
+        this.logger.warn("session.presence-ramp.failed", { error })
+      })
+  }
+
+  #stopPresenceRamp() {
+    if (this.#presenceRampController === null) {
+      return
+    }
+
+    this.#presenceRampController.abort()
+    this.#presenceRampController = null
+  }
+
+  #stopReadReceiptVariance() {
+    if (this.#readReceiptVarianceController === null) {
+      return
+    }
+
+    try {
+      this.#readReceiptVarianceController.stop()
+    } catch (error) {
+      this.logger.warn("session.read-receipt-variance.stop-failed", { error })
+    }
+
+    this.#readReceiptVarianceController = null
+  }
 
   async stop(reason = "manual") {
     if (this.state === SESSION_STATE.STOPPED && this.#socket === null) {
@@ -523,6 +842,20 @@ export class WhatsAppSession {
 
     this.#stopping = true
     this.#clearReconnectTimer()
+    this.logger.info("session.stop.summary", {
+      reason,
+      state: this.state,
+      trackedMessageStatuses: this.#messageStatuses.size,
+      health: this.#sessionHealthMonitor?.getStats() ?? null,
+      humanEntropy:
+        this.#humanEntropy?.getStats?.() ?? {
+          enabled: this.humanEntropyConfig.enabled === true,
+          running: false
+        }
+    })
+    this.#stopHumanEntropy()
+    this.#stopPresenceRamp()
+    this.#stopReadReceiptVariance()
     const socket = this.#socket
     this.#detachSocket(socket)
     this.#socket = null

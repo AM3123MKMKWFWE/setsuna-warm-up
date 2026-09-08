@@ -145,6 +145,103 @@ test("SessionManager menjalankan presence plan sebelum mengirim pesan", async ()
   ])
 })
 
+test("SessionManager mengirim typo lalu koreksi saat legitimacy signal terpicu", async () => {
+  const calls = []
+  const config = loadConfig(
+    { LEGITIMACY_SIGNALS_ENABLED: "true" },
+    { cwd: "C:/workspace" }
+  )
+  const legitimacySignalInjector = {
+    shouldInjectTypo(text) {
+      calls.push(["check-typo", text])
+      return {
+        typoText: text.replace("Halo", "Hxlo"),
+        correctionDelay: 1,
+        correctionText: text
+      }
+    }
+  }
+
+  const manager = new SessionManager({
+    config,
+    logger: createLogger(),
+    legitimacySignalInjector,
+    sessionFactory({ name }) {
+      return {
+        name,
+        socket: { name: `${name}-socket` },
+        snapshot: () => ({ name, state: "ready" }),
+        getOwnJid: () =>
+          name === "admin-1"
+            ? "628111111111@s.whatsapp.net"
+            : "628222222222@s.whatsapp.net",
+        async resolveTargetJid(target) {
+          return target
+        },
+        async sendText(target, text) {
+          calls.push(["send", name, target, text])
+          return { target, text }
+        }
+      }
+    }
+  })
+
+  const result = await manager.sendBetween("admin-1", "admin-2", "Halo QA")
+
+  assert.deepEqual(calls, [
+    ["check-typo", "Halo QA"],
+    ["send", "admin-1", "628222222222@s.whatsapp.net", "Hxlo QA"],
+    ["send", "admin-1", "628222222222@s.whatsapp.net", "Halo QA"]
+  ])
+  assert.deepEqual(result, {
+    target: "628222222222@s.whatsapp.net",
+    text: "Halo QA"
+  })
+})
+
+test("SessionManager tidak mengirim typo saat legitimacy signal tidak terpicu", async () => {
+  const calls = []
+  const config = loadConfig(
+    { LEGITIMACY_SIGNALS_ENABLED: "true" },
+    { cwd: "C:/workspace" }
+  )
+  const legitimacySignalInjector = {
+    shouldInjectTypo() {
+      return null
+    }
+  }
+
+  const manager = new SessionManager({
+    config,
+    logger: createLogger(),
+    legitimacySignalInjector,
+    sessionFactory({ name }) {
+      return {
+        name,
+        socket: { name: `${name}-socket` },
+        snapshot: () => ({ name, state: "ready" }),
+        getOwnJid: () =>
+          name === "admin-1"
+            ? "628111111111@s.whatsapp.net"
+            : "628222222222@s.whatsapp.net",
+        async resolveTargetJid(target) {
+          return target
+        },
+        async sendText(target, text) {
+          calls.push(["send", name, target, text])
+          return { target, text }
+        }
+      }
+    }
+  })
+
+  await manager.sendBetween("admin-1", "admin-2", "Halo QA")
+
+  assert.deepEqual(calls, [
+    ["send", "admin-1", "628222222222@s.whatsapp.net", "Halo QA"]
+  ])
+})
+
 test("SessionManager menolak dua session dengan akun yang sama", () => {
   const config = loadConfig({}, { cwd: "C:/workspace" })
   const manager = new SessionManager({

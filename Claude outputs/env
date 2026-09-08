@@ -8,7 +8,7 @@ LOG_LEVEL=info
 LOG_TO_FILE_ENABLED=true
 LOG_DIRECTORY=./logs
 
-WA_CONNECT_ENABLED=false
+WA_CONNECT_ENABLED=true
 # Data QR mentah bersifat sensitif. Aktifkan hanya sementara jika benar-benar perlu.
 WA_QR_SHOW_RAW=false
 
@@ -32,9 +32,9 @@ PRESENCE_TYPING_MAX_MS=8000
 # ke kontak yang SUDAH pernah mengirim pesan duluan (tidak pernah ke kontak
 # baru/asing). Tujuannya semata QA: sesi yang idle sempurna tanpa aktivitas
 # apa pun sendiri sudah menjadi sinyal anomali.
-HUMAN_ENTROPY_ENABLED=false
-HUMAN_ENTROPY_MIN_INTERVAL_MS=300000
-HUMAN_ENTROPY_MAX_INTERVAL_MS=900000
+HUMAN_ENTROPY_ENABLED=true
+HUMAN_ENTROPY_MIN_INTERVAL_MS=5000
+HUMAN_ENTROPY_MAX_INTERVAL_MS=15000
 
 # Device fingerprint randomization opsional (baileys-antiban generateFingerprint
 # + applyFingerprint). Default OFF. Saat aktif, setiap admin memakai

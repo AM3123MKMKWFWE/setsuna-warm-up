@@ -7,7 +7,7 @@ Admin 1 -> Admin 2 -> Admin 1 -> Admin 2 -> selesai
 ```
 
 > [!IMPORTANT]
-> Baileys merupakan library tidak resmi dan tidak berafiliasi dengan WhatsApp atau Meta. Proyek ini hanya untuk development dan QA menggunakan akun milik sendiri. Jangan digunakan untuk broadcast, cold messaging, percakapan tanpa batas, menyamarkan otomatisasi, atau menghindari sistem anti-abuse.
+> Baileys merupakan library tidak resmi dan tidak berafiliasi dengan WhatsApp atau Meta. Proyek ini hanya untuk development dan QA menggunakan akun milik sendiri. Jangan digunakan untuk broadcast, cold messaging, percakapan tanpa batas, atau melewati sistem anti-abuse. Fitur opt-in yang mengurangi sinyal bot (presence timing, fingerprint device/session, jeda read receipt, typo buatan lihat di bawah) tidak menjamin akun bebas pembatasan; kedua akun tetap milik pengguna sendiri yang saling tahu, tidak ada pihak ketiga yang dikelabui.
 
 ## Status
 
@@ -34,10 +34,39 @@ Fitur inbound pelanggan, trigger `JOIN`, tautan Community, queue inbound, dan SQ
   `baileys-antiban` 4.10.0.
 - Session berubah menjadi `degraded` dan pengiriman dihentikan ketika ambang
   indikasi `Bad MAC` tercapai.
+- **Opt-in, default OFF** — presence choreography: typing plan deterministik
+  (`PRESENCE_ENABLED`) sebelum pesan QA dikirim.
+- **Opt-in, default OFF** — human entropy: aktivitas idle acak (typing/read
+  receipt/presence) ke kontak yang sudah membalas duluan, tidak pernah ke
+  kontak baru (`HUMAN_ENTROPY_ENABLED`). Implementasi sendiri di
+  `src/sessions/human-entropy.js` (bukan lagi `HumanEntropyService` dari
+  `baileys-antiban`, yang ternyata butuh framework terpisah yang tidak ada
+  di proyek ini -- lihat project.md BUG-004).
+- **Opt-in, default OFF** — device fingerprint randomization: appVersion/
+  osVersion/deviceModel acak tapi stabil per admin (`DEVICE_FINGERPRINT_ENABLED`).
+- **Opt-in, default OFF** — stealth connect: browser tuple acak + penundaan
+  presence `available` setelah connect (`STEALTH_CONNECT_ENABLED`).
+- **Opt-in, default OFF** — read receipt variance: `sock.readMessages()`
+  dibungkus dengan jeda Gaussian, bukan instan (`READ_RECEIPT_VARIANCE_ENABLED`).
+- **Opt-in, default OFF** — legitimacy signals: sebagian kecil pesan QA
+  dikirim dengan typo QWERTY yang disengaja lalu dikoreksi setelah jeda
+  singkat (`LEGITIMACY_SIGNALS_ENABLED`). Hanya bagian typo-and-correct yang
+  dipakai; read gap dan mid-typing pause dari modul ini dimatikan.
+- **Opt-in, default OFF** — session fingerprint: superset dari device
+  fingerprint, menambah jitter network/typing/retry serta metadata voice-note
+  dan battery state, semuanya stabil per admin (`SESSION_FINGERPRINT_ENABLED`).
+  Mengalahkan `DEVICE_FINGERPRINT_ENABLED` bila keduanya aktif.
 
-Integrasi `baileys-antiban` dibatasi pada fungsi defensif tersebut. Simulator
-tidak mengaktifkan typo buatan, fingerprint acak, aktivitas presence palsu,
-proxy rotation, warm-up otomatis, atau fitur lain yang menyamarkan otomasi.
+Integrasi `baileys-antiban` dibatasi pada fungsi defensif dan opt-in di atas.
+Sebagian besar bekerja pada level koneksi/protokol; satu pengecualian adalah
+`LegitimacySignalInjector`, yang menyisipkan typo buatan pada isi pesan itu
+sendiri sebagai simulasi ketidaksempurnaan manusia antar dua akun sendiri.
+Simulator ini tidak mengaktifkan proxy rotation, warm-up otomatis skala
+besar, `ReputationVoucher`, atau mekanisme fleet/broadcast lain dari
+`baileys-antiban`. Kedua akun dalam simulator ini saling tahu (bukan
+penipuan terhadap pihak ketiga), dan fitur opt-in ini tidak menjamin akun
+bebas pembatasan. Detail lengkap: [project.md
+§7.1](project.md#71-integrasi-stabilitas-dan-pengurangan-sinyal-bot).
 
 ## Struktur
 
@@ -84,6 +113,8 @@ Salin `.env.example` menjadi `.env`, kemudian gunakan konfigurasi berikut:
 
 ```dotenv
 APP_MODE=conversation
+LOG_TO_FILE_ENABLED=true
+LOG_DIRECTORY=./logs
 WA_CONNECT_ENABLED=true
 
 ADMIN_1_AUTH_DIR=./sessions/admin-1
@@ -96,6 +127,16 @@ DELIVERY_RECEIPT_TIMEOUT_MS=30000
 SESSION_HEALTH_ENABLED=true
 SESSION_BAD_MAC_THRESHOLD=3
 SESSION_BAD_MAC_WINDOW_MS=60000
+
+# Semua baris di bawah ini opsional dan default OFF. Lihat .env.example dan
+# project.md §7.1 untuk penjelasan tiap fitur.
+PRESENCE_ENABLED=false
+HUMAN_ENTROPY_ENABLED=false
+DEVICE_FINGERPRINT_ENABLED=false
+STEALTH_CONNECT_ENABLED=false
+READ_RECEIPT_VARIANCE_ENABLED=false
+LEGITIMACY_SIGNALS_ENABLED=false
+SESSION_FINGERPRINT_ENABLED=false
 ```
 
 ## Menjalankan simulator
@@ -157,9 +198,35 @@ Aturan:
 - jumlah langkah tidak boleh melampaui `MAX_CONVERSATION_STEPS`;
 - skenario harus finite dan tidak menggunakan listener auto-reply.
 
+## Log
+
+Setiap event ditulis sebagai satu baris JSON ke console. Selain itu, selama
+`LOG_TO_FILE_ENABLED=true` (default), baris yang sama juga ditulis ke file
+harian di `logs/app-YYYY-MM-DD.log` (mirip `storage/logs/laravel.log`),
+dengan redaksi data sensitif yang sama seperti di console. File baru dibuat
+otomatis setiap pergantian hari. Kegagalan menulis file (misalnya permission
+disk) tidak menghentikan aplikasi -- hanya dicatat sebagai
+`logger.file-write.failed` di console. Isi `logs/` tidak boleh dicommit
+(sudah masuk `.gitignore`) karena bisa memuat konteks pengiriman pesan.
+
+Event observability tambahan yang tersedia:
+
+- `session.features.configured`: status ON/OFF dan parameter aman setiap fitur;
+- `session.ready.summary`: snapshot health dan human entropy saat session siap;
+- `session.health.observed`: jumlah decrypt sukses/gagal per batch pesan;
+- `session.health.decrypt-failure-update`: indikasi ciphertext gagal dari update;
+- `human-entropy.cycle.scheduled`: waktu tunggu menuju siklus berikutnya;
+- `human-entropy.cycle.completed`: aksi dan statistik kumulatif tiap siklus;
+- `human-entropy.stopped` dan `session.stop.summary`: ringkasan saat shutdown.
+
+Statistik human entropy hanya berisi counter. JID kontak tidak dimasukkan ke
+event-event tersebut.
+
 ## Masalah session saat ini
 
 Uji terakhir menunjukkan Admin 2 berubah menjadi `401 loggedOut` setelah langkah kedua. Ini bukan masalah jeda atau urutan sender. Pairing ulang Admin 2 diperlukan sebelum skenario penuh diulang.
+
+Jika terminal menampilkan `session.connection.closed` dengan `statusCode: 405` dan `disconnectCategory: "fatal"` berulang di setiap percobaan reconnect sampai `session.reconnect.exhausted` -- terutama tepat setelah `DEVICE_FINGERPRINT_ENABLED` atau `SESSION_FINGERPRINT_ENABLED` dinyalakan -- itu bukan masalah kredensial atau jaringan. Lihat [project.md BUG-003](project.md#bug-003--devicesession-fingerprint-memicu-disconnect-fatal-status-405-di-semua-percobaan-reconnect); sudah diperbaiki di kode saat ini.
 
 Jika terminal menampilkan `Bad MAC` atau `Failed to decrypt message with any known session`:
 

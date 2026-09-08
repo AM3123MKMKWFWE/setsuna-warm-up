@@ -1,0 +1,89 @@
+═══════════════════════════════════════════════════════════════════════════════
+                    PERBANDINGAN KONFIGURASI HUMAN_ENTROPY
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 LOKASI FILE:
+   C:\laragon\www\warm-up\setsuna-warm-up\.env
+
+───────────────────────────────────────────────────────────────────────────────
+KONFIGURASI SEBELUMNYA (❌ TIDAK BEKERJA)
+───────────────────────────────────────────────────────────────────────────────
+
+Baris 30-37:
+
+# Human entropy opsional (baileys-antiban HumanEntropyService). Default OFF.
+# Saat aktif, background service mengirim typing/read-receipt/presence acak
+# ke kontak yang SUDAH pernah mengirim pesan duluan (tidak pernah ke kontak
+# baru/asing). Tujuannya semata QA: sesi yang idle sempurna tanpa aktivitas
+# apa pun sendiri sudah menjadi sinyal anomali.
+HUMAN_ENTROPY_ENABLED=true
+HUMAN_ENTROPY_MIN_INTERVAL_MS=300000      ← 5 MENIT (TERLALU LAMA!)
+HUMAN_ENTROPY_MAX_INTERVAL_MS=900000      ← 15 MENIT (TERLALU LAMA!)
+
+
+HASIL LOG:
+  "humanEntropy": {
+    "running": true,
+    "cycles": 0,            ← ZERO cycles (tidak jalan!)
+    "typingActions": 0,     ← ZERO actions
+    "readActions": 0,       ← ZERO actions
+    "presenceActions": 0    ← ZERO actions
+  }
+
+PENYEBAB: Percakapan selesai dalam ~4 menit, tapi interval pertama 5-15 menit!
+
+───────────────────────────────────────────────────────────────────────────────
+KONFIGURASI BARU (✅ BEKERJA)
+───────────────────────────────────────────────────────────────────────────────
+
+HUMAN_ENTROPY_ENABLED=true
+HUMAN_ENTROPY_MIN_INTERVAL_MS=5000        ← 5 DETIK (LEBIH CEPAT!)
+HUMAN_ENTROPY_MAX_INTERVAL_MS=15000       ← 15 DETIK (LEBIH CEPAT!)
+
+
+HASIL YANG DIHARAPKAN:
+  "humanEntropy": {
+    "running": true,
+    "cycles": 1+,           ← CYCLES BERJALAN!
+    "typingActions": 1+,    ← ADA AKSI!
+    "readActions": 1+,      ← ADA AKSI!
+    "presenceActions": 1+   ← ADA AKSI!
+  }
+
+MANFAAT: Cycle pertama bisa jalan dalam 5 detik, sempat dijalankan sebelum app selesai!
+
+───────────────────────────────────────────────────────────────────────────────
+RINGKASAN PERUBAHAN
+───────────────────────────────────────────────────────────────────────────────
+
+Parameter                          | Sebelum      | Sesudah    | Pengurangan
+───────────────────────────────────────────────────────────────────────────────
+HUMAN_ENTROPY_MIN_INTERVAL_MS     | 300000 ms    | 5000 ms    | 98% lebih cepat
+HUMAN_ENTROPY_MAX_INTERVAL_MS     | 900000 ms    | 15000 ms   | 98.3% lebih cepat
+
+Dalam waktu:                       | 5-15 menit   | 5-15 detik | 60x lebih cepat!
+
+───────────────────────────────────────────────────────────────────────────────
+CARA EDIT (STEP-BY-STEP)
+───────────────────────────────────────────────────────────────────────────────
+
+1. Buka file: C:\laragon\www\warm-up\setsuna-warm-up\.env
+   (Gunakan: VS Code, Notepad++, Sublime Text, dll)
+
+2. Cari baris ke-36 dan 37:
+   
+   HUMAN_ENTROPY_MIN_INTERVAL_MS=300000
+   HUMAN_ENTROPY_MAX_INTERVAL_MS=900000
+
+3. Ubah menjadi:
+   
+   HUMAN_ENTROPY_MIN_INTERVAL_MS=5000
+   HUMAN_ENTROPY_MAX_INTERVAL_MS=15000
+
+4. Simpan file (Ctrl+S)
+
+5. Restart aplikasi
+
+6. Verifikasi di log bahwa `cycles` > 0
+
+═══════════════════════════════════════════════════════════════════════════════

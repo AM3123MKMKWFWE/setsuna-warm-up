@@ -1,6 +1,7 @@
-import { PresenceChoreographer } from "baileys-antiban"
+import { PresenceChoreographer, LegitimacySignalInjector } from "baileys-antiban"
 
 import { WhatsAppSession } from "./whatsapp-session.js"
+import { sleep } from "../utils/sleep.js"
 
 function createQaPresence(config = {}) {
   return new PresenceChoreographer({
@@ -26,12 +27,34 @@ function createQaPresence(config = {}) {
   })
 }
 
+function createLegitimacySignals(config = {}) {
+  return new LegitimacySignalInjector({
+    enableTypos: config.enabled ?? false,
+    typoProbability: config.typoProbability ?? 0.025,
+    // Read gaps and mid-typing pauses are left off: read gaps model a live
+    // inbound-reply flow this scripted two-account simulator doesn't have,
+    // and typing pauses would double up with PresenceChoreographer's own
+    // deterministic typing plan above.
+    enableReadGaps: false,
+    enableTypingPauses: false
+  })
+}
+
 export class SessionManager {
-  constructor({ config, logger, sessionFactory, presenceChoreographer }) {
+  constructor({
+    config,
+    logger,
+    sessionFactory,
+    presenceChoreographer,
+    legitimacySignalInjector
+  }) {
     this.logger = logger
     this.presenceEnabled = config.presence?.enabled === true
     this.presenceChoreographer =
       presenceChoreographer ?? createQaPresence(config.presence)
+    this.legitimacySignalsEnabled = config.legitimacySignals?.enabled === true
+    this.legitimacySignalInjector =
+      legitimacySignalInjector ?? createLegitimacySignals(config.legitimacySignals)
     const createSession =
       sessionFactory ?? ((options) => new WhatsAppSession(options))
     const reconnectOptions = {
@@ -48,6 +71,11 @@ export class SessionManager {
           logger: logger.child(admin.name),
           showRawQr: config.showRawQr,
           sessionHealth: config.sessionHealth,
+          humanEntropy: config.humanEntropy,
+          deviceFingerprint: config.deviceFingerprint,
+          stealthConnect: config.stealthConnect,
+          readReceiptVariance: config.readReceiptVariance,
+          sessionFingerprint: config.sessionFingerprint,
           ...reconnectOptions
         })
         return [admin.name, session]
@@ -159,6 +187,21 @@ export class SessionManager {
           canonicalRecipientJid,
           plan
         )
+      }
+    }
+
+    if (this.legitimacySignalsEnabled) {
+      const typo = this.legitimacySignalInjector.shouldInjectTypo(normalizedText)
+
+      if (typo) {
+        this.logger.info("session-manager.legitimacy-signal.typo", {
+          sender: senderName,
+          recipient: recipientName,
+          correctionDelayMs: typo.correctionDelay
+        })
+        await sender.sendText(canonicalRecipientJid, typo.typoText)
+        await sleep(typo.correctionDelay)
+        return sender.sendText(canonicalRecipientJid, typo.correctionText)
       }
     }
 

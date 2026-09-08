@@ -47,6 +47,20 @@ function parseBoolean(value, { field, fallback }) {
   throw new ConfigurationError(`${field} harus bernilai true atau false`, field)
 }
 
+function parseProbability(value, { field, fallback }) {
+  const rawValue = value === undefined || value === "" ? fallback : value
+  const parsed = Number(rawValue)
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new ConfigurationError(
+      `${field} harus berupa angka antara 0 dan 1`,
+      field
+    )
+  }
+
+  return parsed
+}
+
 function parseDirectory(value, fallback, field, cwd) {
   const directory = String(value ?? fallback).trim()
 
@@ -72,6 +86,18 @@ export function loadConfig(env = process.env, options = {}) {
   return Object.freeze({
     mode,
     logLevel,
+    logging: Object.freeze({
+      toFileEnabled: parseBoolean(env.LOG_TO_FILE_ENABLED, {
+        field: "LOG_TO_FILE_ENABLED",
+        fallback: true
+      }),
+      directory: parseDirectory(
+        env.LOG_DIRECTORY,
+        "./logs",
+        "LOG_DIRECTORY",
+        cwd
+      )
+    }),
     whatsappConnectionEnabled: parseBoolean(env.WA_CONNECT_ENABLED, {
       field: "WA_CONNECT_ENABLED",
       fallback: false
@@ -120,6 +146,82 @@ export function loadConfig(env = process.env, options = {}) {
         fallback: 8000,
         min: 600,
         max: 30000
+      })
+    }),
+    humanEntropy: Object.freeze({
+      enabled: parseBoolean(env.HUMAN_ENTROPY_ENABLED, {
+        field: "HUMAN_ENTROPY_ENABLED",
+        fallback: false
+      }),
+      minIntervalMs: parseInteger(env.HUMAN_ENTROPY_MIN_INTERVAL_MS, {
+        field: "HUMAN_ENTROPY_MIN_INTERVAL_MS",
+        fallback: 300000,
+        min: 1000,
+        max: 86400000
+      }),
+      maxIntervalMs: parseInteger(env.HUMAN_ENTROPY_MAX_INTERVAL_MS, {
+        field: "HUMAN_ENTROPY_MAX_INTERVAL_MS",
+        fallback: 900000,
+        min: 1000,
+        max: 86400000
+      })
+    }),
+    deviceFingerprint: Object.freeze({
+      enabled: parseBoolean(env.DEVICE_FINGERPRINT_ENABLED, {
+        field: "DEVICE_FINGERPRINT_ENABLED",
+        fallback: false
+      })
+    }),
+    stealthConnect: Object.freeze({
+      enabled: parseBoolean(env.STEALTH_CONNECT_ENABLED, {
+        field: "STEALTH_CONNECT_ENABLED",
+        fallback: false
+      }),
+      presenceRampMinMs: parseInteger(env.STEALTH_PRESENCE_RAMP_MIN_MS, {
+        field: "STEALTH_PRESENCE_RAMP_MIN_MS",
+        fallback: 30000,
+        min: 0,
+        max: 300000
+      }),
+      presenceRampMaxMs: parseInteger(env.STEALTH_PRESENCE_RAMP_MAX_MS, {
+        field: "STEALTH_PRESENCE_RAMP_MAX_MS",
+        fallback: 90000,
+        min: 0,
+        max: 600000
+      })
+    }),
+    readReceiptVariance: Object.freeze({
+      enabled: parseBoolean(env.READ_RECEIPT_VARIANCE_ENABLED, {
+        field: "READ_RECEIPT_VARIANCE_ENABLED",
+        fallback: false
+      }),
+      meanMs: parseInteger(env.READ_RECEIPT_VARIANCE_MEAN_MS, {
+        field: "READ_RECEIPT_VARIANCE_MEAN_MS",
+        fallback: 1500,
+        min: 0,
+        max: 60000
+      }),
+      stdDevMs: parseInteger(env.READ_RECEIPT_VARIANCE_STDDEV_MS, {
+        field: "READ_RECEIPT_VARIANCE_STDDEV_MS",
+        fallback: 800,
+        min: 0,
+        max: 30000
+      })
+    }),
+    legitimacySignals: Object.freeze({
+      enabled: parseBoolean(env.LEGITIMACY_SIGNALS_ENABLED, {
+        field: "LEGITIMACY_SIGNALS_ENABLED",
+        fallback: false
+      }),
+      typoProbability: parseProbability(env.LEGITIMACY_SIGNALS_TYPO_PROBABILITY, {
+        field: "LEGITIMACY_SIGNALS_TYPO_PROBABILITY",
+        fallback: 0.025
+      })
+    }),
+    sessionFingerprint: Object.freeze({
+      enabled: parseBoolean(env.SESSION_FINGERPRINT_ENABLED, {
+        field: "SESSION_FINGERPRINT_ENABLED",
+        fallback: false
       })
     }),
     admins: Object.freeze({
@@ -205,10 +307,17 @@ export function summarizeConfig(config) {
   return {
     mode: config.mode,
     logLevel: config.logLevel,
+    logging: config.logging,
     whatsappConnectionEnabled: config.whatsappConnectionEnabled,
     showRawQr: config.showRawQr,
     sessionHealth: config.sessionHealth,
+    humanEntropy: config.humanEntropy,
     presence: config.presence,
+    deviceFingerprint: config.deviceFingerprint,
+    stealthConnect: config.stealthConnect,
+    readReceiptVariance: config.readReceiptVariance,
+    legitimacySignals: config.legitimacySignals,
+    sessionFingerprint: config.sessionFingerprint,
     limits: config.limits
   }
 }
