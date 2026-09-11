@@ -14,9 +14,22 @@ function createLogger() {
   return logger
 }
 
-test("SessionManager membuat dan mengelola dua session terpisah", async () => {
+const JID_BY_ADMIN = {
+  "admin-1": "628111111111@s.whatsapp.net",
+  "admin-2": "628222222222@s.whatsapp.net",
+  "admin-3": "628333333333@s.whatsapp.net",
+  "admin-4": "628444444444@s.whatsapp.net"
+}
+
+test("SessionManager membuat dan mengelola empat session terpisah", async () => {
   const created = []
-  const config = loadConfig({}, { cwd: "C:/workspace" })
+  const config = loadConfig(
+    {
+      ADMIN_3_AUTH_DIR: "./sessions/admin-3",
+      ADMIN_4_AUTH_DIR: "./sessions/admin-4"
+    },
+    { cwd: "C:/workspace" }
+  )
   const manager = new SessionManager({
     config,
     logger: createLogger(),
@@ -39,9 +52,7 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
           return this.snapshot()
         },
         getOwnJid() {
-          return this.name === "admin-1"
-            ? "628111111111@s.whatsapp.net"
-            : "628222222222@s.whatsapp.net"
+          return JID_BY_ADMIN[this.name]
         },
         async resolveTargetJid(target) {
           return target
@@ -60,11 +71,12 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
 
   assert.deepEqual(
     created.map((session) => session.name),
-    ["admin-1", "admin-2"]
+    ["admin-1", "admin-2", "admin-3", "admin-4"]
   )
 
   await manager.startAll()
   await manager.waitUntilAllReady()
+  manager.assertAllReady()
   assert.deepEqual(
     await manager.sendText("admin-1", "628123456789", "Halo"),
     { target: "628123456789", text: "Halo" }
@@ -72,6 +84,10 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
   assert.deepEqual(
     await manager.sendBetween("admin-1", "admin-2", "Tes"),
     { target: "628222222222@s.whatsapp.net", text: "Tes" }
+  )
+  assert.deepEqual(
+    await manager.sendBetween("admin-3", "admin-4", "Tes lain"),
+    { target: "628444444444@s.whatsapp.net", text: "Tes lain" }
   )
   assert.deepEqual(
     await manager.waitForMessageStatus("admin-1", "message-1", {
@@ -84,6 +100,8 @@ test("SessionManager membuat dan mengelola dua session terpisah", async () => {
   assert.deepEqual(
     created.map((session) => [session.started, session.stopped]),
     [
+      [1, 1],
+      [1, 1],
       [1, 1],
       [1, 1]
     ]

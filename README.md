@@ -1,18 +1,23 @@
-# WhatsApp Two-Account Conversation Simulator
+# WhatsApp Multi-Account Conversation Simulator (4 Admin)
 
-Proyek Node.js berbasis Baileys untuk menguji percakapan finite antara dua akun WhatsApp milik sendiri:
+Proyek Node.js berbasis Baileys untuk menguji percakapan finite antara empat akun WhatsApp milik sendiri (admin-1 s.d. admin-4), saling bertukar pesan berpasangan sehingga tidak ada admin yang hanya pernah chat dengan satu kontak yang sama terus-menerus:
 
 ```text
-Admin 1 -> Admin 2 -> Admin 1 -> Admin 2 -> selesai
+admin-1 <-> admin-2
+admin-3 <-> admin-4
+admin-1 <-> admin-3
+admin-2 <-> admin-4
+admin-1 <-> admin-4
+admin-2 <-> admin-3
 ```
 
 > [!IMPORTANT]
-> Baileys merupakan library tidak resmi dan tidak berafiliasi dengan WhatsApp atau Meta. Proyek ini hanya untuk development dan QA menggunakan akun milik sendiri. Jangan digunakan untuk broadcast, cold messaging, percakapan tanpa batas, atau melewati sistem anti-abuse. Fitur opt-in yang mengurangi sinyal bot (presence timing, fingerprint device/session, jeda read receipt, typo buatan lihat di bawah) tidak menjamin akun bebas pembatasan; kedua akun tetap milik pengguna sendiri yang saling tahu, tidak ada pihak ketiga yang dikelabui.
+> Baileys merupakan library tidak resmi dan tidak berafiliasi dengan WhatsApp atau Meta. Proyek ini hanya untuk development dan QA menggunakan akun milik sendiri. Jangan digunakan untuk broadcast, cold messaging, percakapan tanpa batas, atau melewati sistem anti-abuse. Fitur opt-in yang mengurangi sinyal bot (presence timing, fingerprint device/session, jeda read receipt, typo buatan lihat di bawah) tidak menjamin akun bebas pembatasan; seluruh akun tetap milik pengguna sendiri yang saling tahu, tidak ada pihak ketiga yang dikelabui.
 
 ## Status
 
 - Tahap 1: fondasi proyek — selesai.
-- Tahap 2: koneksi dua session — kode selesai; verifikasi auth nyata masih diperlukan.
+- Tahap 2: koneksi multi-session (empat admin) — kode selesai; verifikasi auth nyata masih diperlukan.
 - Tahap 3: simulator finite — kode dan automated test selesai.
 - Tahap 4: stabilitas, profil skenario, dan laporan run — sudah dirancang ulang, belum diimplementasikan.
 
@@ -20,12 +25,12 @@ Fitur inbound pelanggan, trigger `JOIN`, tautan Community, queue inbound, dan SQ
 
 ## Fitur saat ini
 
-- Dua socket Baileys dengan auth directory terpisah.
-- QR pairing terpisah untuk Admin 1 dan Admin 2.
-- Pengecekan bahwa kedua session menggunakan akun berbeda.
+- Empat socket Baileys dengan auth directory terpisah (admin-1 s.d. admin-4).
+- QR pairing terpisah untuk setiap admin.
+- Pengecekan bahwa seluruh session menggunakan akun berbeda satu sama lain.
 - Reconnect terbatas dan penghentian terminal saat logout.
-- Tes pengiriman satu kali pada kedua arah.
-- Skenario percakapan finite dengan sepuluh langkah.
+- Tes pengiriman satu kali pada satu pasangan admin.
+- Skenario percakapan finite dengan 24 langkah, mencakup keenam pasangan admin.
 - Jeda yang dapat dikonfigurasi.
 - Konfirmasi `DELIVERY_ACK` per langkah.
 - Stop protection saat session disconnect atau proses dibatalkan.
@@ -60,10 +65,10 @@ Fitur inbound pelanggan, trigger `JOIN`, tautan Community, queue inbound, dan SQ
 Integrasi `baileys-antiban` dibatasi pada fungsi defensif dan opt-in di atas.
 Sebagian besar bekerja pada level koneksi/protokol; satu pengecualian adalah
 `LegitimacySignalInjector`, yang menyisipkan typo buatan pada isi pesan itu
-sendiri sebagai simulasi ketidaksempurnaan manusia antar dua akun sendiri.
+sendiri sebagai simulasi ketidaksempurnaan manusia antar akun sendiri.
 Simulator ini tidak mengaktifkan proxy rotation, warm-up otomatis skala
 besar, `ReputationVoucher`, atau mekanisme fleet/broadcast lain dari
-`baileys-antiban`. Kedua akun dalam simulator ini saling tahu (bukan
+`baileys-antiban`. Seluruh akun dalam simulator ini saling tahu (bukan
 penipuan terhadap pihak ketiga), dan fitur opt-in ini tidak menjamin akun
 bebas pembatasan. Detail lengkap: [project.md
 §7.1](project.md#71-integrasi-stabilitas-dan-pengurangan-sinyal-bot).
@@ -97,9 +102,9 @@ src/
 Prasyarat:
 
 - Node.js 20 atau lebih baru;
-- dua akun WhatsApp milik sendiri;
+- empat akun WhatsApp milik sendiri (admin-1 s.d. admin-4);
 - koneksi internet stabil;
-- satu process saja untuk setiap pasangan auth directory.
+- satu process saja untuk setiap auth directory.
 
 Instal dan periksa proyek:
 
@@ -119,8 +124,10 @@ WA_CONNECT_ENABLED=true
 
 ADMIN_1_AUTH_DIR=./sessions/admin-1
 ADMIN_2_AUTH_DIR=./sessions/admin-2
+ADMIN_3_AUTH_DIR=./sessions/admin-3
+ADMIN_4_AUTH_DIR=./sessions/admin-4
 
-MAX_CONVERSATION_STEPS=10
+MAX_CONVERSATION_STEPS=24
 MESSAGE_DELAY_MS=65000
 DELIVERY_RECEIPT_TIMEOUT_MS=30000
 
@@ -147,17 +154,17 @@ npm start
 
 Aplikasi akan:
 
-1. Membuat atau memulihkan kedua session.
+1. Membuat atau memulihkan keempat session.
 2. Menampilkan QR untuk session yang belum dipasangkan.
-3. Menunggu kedua session `ready`.
-4. Memastikan kedua session memakai akun berbeda.
+3. Menunggu keempat session `ready`.
+4. Memastikan seluruh session memakai akun berbeda satu sama lain.
 5. Menjalankan skenario di `src/conversation/scenarios.js`.
-6. Menutup kedua socket ketika skenario selesai atau gagal.
+6. Menutup keempat socket ketika skenario selesai atau gagal.
 
 > [!WARNING]
-> `npm start` dengan `WA_CONNECT_ENABLED=true` benar-benar mengirim pesan. Dengan sepuluh langkah dan jeda 65 detik, satu pengujian memerlukan sekitar sepuluh menit.
+> `npm start` dengan `WA_CONNECT_ENABLED=true` benar-benar mengirim pesan. Dengan 24 langkah dan jeda 65 detik antar pesan, satu pengujian penuh memerlukan sekitar 25 menit.
 
-Pesan pertama dikirim segera setelah kedua session siap. Pesan berikutnya menunggu `MESSAGE_DELAY_MS`. Jangan menjalankan `npm start` dan `npm run test:manual-send` secara bersamaan.
+Pesan pertama dikirim segera setelah keempat session siap. Pesan berikutnya menunggu `MESSAGE_DELAY_MS`. Jangan menjalankan `npm start` dan `npm run test:manual-send` secara bersamaan.
 
 ## Tes pengiriman dua arah
 
@@ -178,6 +185,9 @@ selesai
 
 Setiap run memakai kode unik yang sama pada kedua pesan. Tes hanya berhasil jika kedua arah memperoleh `DELIVERY_ACK`.
 
+> [!NOTE]
+> Skrip ini menunggu **keempat** session (admin-1 s.d. admin-4) siap terlebih dahulu (karena `startAll()`/`waitUntilAllReady()` selalu memproses seluruh admin yang terkonfigurasi), tetapi baru menguji satu pasangan pengiriman (admin-1 <-> admin-2). Belum diperluas untuk mendiagnosis lima pasangan admin lainnya.
+
 ## Mengubah percakapan
 
 Ubah daftar pesan di `src/conversation/scenarios.js`. Setiap langkah harus mempunyai:
@@ -185,6 +195,7 @@ Ubah daftar pesan di `src/conversation/scenarios.js`. Setiap langkah harus mempu
 ```javascript
 {
   sender: "admin-1",
+  recipient: "admin-2",
   text: "Isi pesan",
   delayMs: 65000
 }
@@ -192,11 +203,12 @@ Ubah daftar pesan di `src/conversation/scenarios.js`. Setiap langkah harus mempu
 
 Aturan:
 
-- `sender` hanya `admin-1` atau `admin-2`;
-- sender sebaiknya bergantian;
+- `sender` dan `recipient` wajib salah satu dari `admin-1`, `admin-2`, `admin-3`, `admin-4`;
+- `sender` dan `recipient` tidak boleh sama (tidak bisa kirim pesan ke diri sendiri);
 - teks tidak boleh kosong;
 - jumlah langkah tidak boleh melampaui `MAX_CONVERSATION_STEPS`;
-- skenario harus finite dan tidak menggunakan listener auto-reply.
+- skenario harus finite dan tidak menggunakan listener auto-reply;
+- sebaiknya setiap admin berinteraksi dengan lebih dari satu kontak, bukan hanya satu pasangan tetap.
 
 ## Log
 
@@ -244,6 +256,6 @@ Jika terminal menampilkan `Bad MAC` atau `Failed to decrypt message with any kno
 - Jangan mengirim ulang otomatis ketika status delivery tidak pasti.
 - Batasi jumlah langkah, reconnect, dan durasi pengujian.
 - Hentikan skenario jika salah satu session logout.
-- Gunakan hanya dua akun pengujian milik sendiri.
+- Gunakan hanya akun pengujian milik sendiri (admin-1 s.d. admin-4).
 
 Rancangan tahapan dan catatan bug tersedia di [project.md](project.md).

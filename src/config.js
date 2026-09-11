@@ -71,6 +71,61 @@ function parseDirectory(value, fallback, field, cwd) {
   return path.resolve(cwd, directory)
 }
 
+/**
+ * admin-1 dan admin-2 SELALU ada, dengan direktori default kalau
+ * `ADMIN_1_AUTH_DIR`/`ADMIN_2_AUTH_DIR` tidak diisi -- ini menjaga perilaku
+ * lama (kompatibel dengan `.env` yang belum menyebutkan admin sama sekali)
+ * dan sekaligus memastikan sistem selalu punya minimal 2 admin untuk
+ * dijalankan tanpa konfigurasi tambahan apa pun.
+ *
+ * admin-3 dan seterusnya bersifat opsional: hanya ditambahkan kalau
+ * `ADMIN_{n}_AUTH_DIR` memang diisi eksplisit di `.env`. Penomoran berhenti
+ * begitu ketemu nomor pertama yang variabelnya tidak ada -- jadi
+ * `ADMIN_3_AUTH_DIR` tanpa `ADMIN_4_AUTH_DIR` hanya menghasilkan 3 admin,
+ * bukan meloncat ke `ADMIN_5_AUTH_DIR` kalau itu ada.
+ */
+function loadAdmins(env, cwd) {
+  const admins = {}
+
+  for (const index of [1, 2]) {
+    admins[`admin${index}`] = Object.freeze({
+      name: `admin-${index}`,
+      authDirectory: parseDirectory(
+        env[`ADMIN_${index}_AUTH_DIR`],
+        `./sessions/admin-${index}`,
+        `ADMIN_${index}_AUTH_DIR`,
+        cwd
+      )
+    })
+  }
+
+  let index = 3
+  while (env[`ADMIN_${index}_AUTH_DIR`] !== undefined) {
+    admins[`admin${index}`] = Object.freeze({
+      name: `admin-${index}`,
+      authDirectory: parseDirectory(
+        env[`ADMIN_${index}_AUTH_DIR`],
+        `./sessions/admin-${index}`,
+        `ADMIN_${index}_AUTH_DIR`,
+        cwd
+      )
+    })
+    index += 1
+  }
+
+  // Defensif: secara desain admin-1/admin-2 di atas selalu mengisi minimal
+  // dua entri, jadi baris ini seharusnya tidak pernah terpicu -- disimpan
+  // sebagai jaring pengaman kalau logikanya berubah di masa depan.
+  if (Object.keys(admins).length < 2) {
+    throw new ConfigurationError(
+      "Minimal 2 admin harus dikonfigurasi (ADMIN_1_AUTH_DIR dan ADMIN_2_AUTH_DIR)",
+      "ADMIN_AUTH_DIR"
+    )
+  }
+
+  return Object.freeze(admins)
+}
+
 export function loadConfig(env = process.env, options = {}) {
   const cwd = options.cwd ?? process.cwd()
   const mode = parseEnum(env.APP_MODE, {
@@ -224,25 +279,20 @@ export function loadConfig(env = process.env, options = {}) {
         fallback: false
       })
     }),
-    admins: Object.freeze({
-      admin1: Object.freeze({
-        name: "admin-1",
-        authDirectory: parseDirectory(
-          env.ADMIN_1_AUTH_DIR,
-          "./sessions/admin-1",
-          "ADMIN_1_AUTH_DIR",
-          cwd
-        )
+    admins: loadAdmins(env, cwd),
+    seniority: Object.freeze({
+      thresholdMessages: parseInteger(env.SENIORITY_THRESHOLD, {
+        field: "SENIORITY_THRESHOLD",
+        fallback: 20,
+        min: 1,
+        max: 10000
       }),
-      admin2: Object.freeze({
-        name: "admin-2",
-        authDirectory: parseDirectory(
-          env.ADMIN_2_AUTH_DIR,
-          "./sessions/admin-2",
-          "ADMIN_2_AUTH_DIR",
-          cwd
-        )
-      })
+      stateFilePath: parseDirectory(
+        env.RELATIONSHIP_STATE_FILE,
+        "./data/relationship-state.json",
+        "RELATIONSHIP_STATE_FILE",
+        cwd
+      )
     }),
     limits: Object.freeze({
       maxConversationSteps: parseInteger(env.MAX_CONVERSATION_STEPS, {
@@ -318,6 +368,7 @@ export function summarizeConfig(config) {
     readReceiptVariance: config.readReceiptVariance,
     legitimacySignals: config.legitimacySignals,
     sessionFingerprint: config.sessionFingerprint,
+    seniority: config.seniority,
     limits: config.limits
   }
 }

@@ -222,3 +222,100 @@ test("WA_QR_SHOW_RAW hanya aktif jika diminta eksplisit", () => {
   assert.equal(loadConfig({ WA_QR_SHOW_RAW: "true" }).showRawQr, true)
   assert.throws(() => loadConfig({ WA_QR_SHOW_RAW: "1" }), /true atau false/)
 })
+
+test("config.admins selalu berisi admin-1 dan admin-2 walau .env kosong", () => {
+  const config = loadConfig({}, { cwd: "C:/workspace" })
+
+  assert.deepEqual(Object.keys(config.admins), ["admin1", "admin2"])
+  assert.equal(config.admins.admin1.name, "admin-1")
+  assert.equal(config.admins.admin2.name, "admin-2")
+  assert.equal(
+    config.admins.admin1.authDirectory,
+    path.resolve("C:/workspace", "./sessions/admin-1")
+  )
+  assert.equal(
+    config.admins.admin2.authDirectory,
+    path.resolve("C:/workspace", "./sessions/admin-2")
+  )
+})
+
+test("config.admins bertambah otomatis kalau ADMIN_3_AUTH_DIR dst diisi eksplisit", () => {
+  const config = loadConfig(
+    {
+      ADMIN_3_AUTH_DIR: "./sessions/admin-3",
+      ADMIN_4_AUTH_DIR: "./sessions/admin-4"
+    },
+    { cwd: "C:/workspace" }
+  )
+
+  assert.deepEqual(Object.keys(config.admins), [
+    "admin1",
+    "admin2",
+    "admin3",
+    "admin4"
+  ])
+  assert.equal(config.admins.admin4.name, "admin-4")
+})
+
+test("penomoran admin berhenti begitu ketemu nomor yang kosong (tidak meloncat)", () => {
+  const config = loadConfig(
+    {
+      ADMIN_3_AUTH_DIR: "./sessions/admin-3",
+      // ADMIN_4_AUTH_DIR sengaja tidak diisi
+      ADMIN_5_AUTH_DIR: "./sessions/admin-5"
+    },
+    { cwd: "C:/workspace" }
+  )
+
+  assert.deepEqual(Object.keys(config.admins), ["admin1", "admin2", "admin3"])
+  assert.equal("admin5" in config.admins, false)
+})
+
+test("ADMIN_3_AUTH_DIR yang sengaja dikosongkan tetap melempar error, bukan diabaikan", () => {
+  assert.throws(
+    () => loadConfig({ ADMIN_3_AUTH_DIR: "" }),
+    /ADMIN_3_AUTH_DIR tidak boleh kosong/
+  )
+})
+
+test("SENIORITY_THRESHOLD default 20 dan bisa dikustomisasi", () => {
+  assert.equal(loadConfig({}).seniority.thresholdMessages, 20)
+  assert.equal(
+    loadConfig({ SENIORITY_THRESHOLD: "5" }).seniority.thresholdMessages,
+    5
+  )
+  assert.throws(
+    () => loadConfig({ SENIORITY_THRESHOLD: "0" }),
+    /antara 1 dan 10000/
+  )
+})
+
+test("summarizeConfig menyertakan seniority tapi tidak pernah menyertakan admins", () => {
+  const summary = summarizeConfig(loadConfig({}))
+
+  assert.equal("seniority" in summary, true)
+  assert.equal(summary.seniority.thresholdMessages, 20)
+  assert.equal("admins" in summary, false)
+})
+
+test("seniority.stateFilePath default ke ./data/relationship-state.json dan bisa dikustomisasi", () => {
+  const defaults = loadConfig({}, { cwd: "C:/workspace" })
+  assert.equal(
+    defaults.seniority.stateFilePath,
+    path.resolve("C:/workspace", "./data/relationship-state.json")
+  )
+
+  const custom = loadConfig(
+    { RELATIONSHIP_STATE_FILE: "./data/custom-state.json" },
+    { cwd: "C:/workspace" }
+  )
+  assert.equal(
+    custom.seniority.stateFilePath,
+    path.resolve("C:/workspace", "./data/custom-state.json")
+  )
+
+  assert.throws(
+    () => loadConfig({ RELATIONSHIP_STATE_FILE: "" }, { cwd: "C:/workspace" }),
+    /RELATIONSHIP_STATE_FILE tidak boleh kosong/
+  )
+})

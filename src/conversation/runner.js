@@ -1,7 +1,7 @@
 import { OperationAbortedError, sleep } from "../utils/sleep.js"
 import { MessageDeliveryTimeoutError } from "../sessions/session-state.js"
 
-const ALLOWED_SENDERS = new Set(["admin-1", "admin-2"])
+const DEFAULT_PARTICIPANTS = ["admin-1", "admin-2"]
 
 export class ScenarioValidationError extends Error {
   constructor(message, stepIndex = null) {
@@ -24,6 +24,8 @@ export function validateScenario(scenario, options = {}) {
   const minDelayMs = options.minDelayMs ?? 0
   const maxDelayMs = options.maxDelayMs ?? 300000
   const maxTextLength = options.maxTextLength ?? 4096
+  const participants = new Set(options.participants ?? DEFAULT_PARTICIPANTS)
+  const participantList = [...participants].join(", ")
 
   if (!Array.isArray(scenario) || scenario.length === 0) {
     throw new ScenarioValidationError("Skenario harus berupa array yang tidak kosong")
@@ -44,9 +46,23 @@ export function validateScenario(scenario, options = {}) {
       throw new ScenarioValidationError("Format langkah tidak valid", index)
     }
 
-    if (!ALLOWED_SENDERS.has(step.sender)) {
+    if (!participants.has(step.sender)) {
       throw new ScenarioValidationError(
-        "sender harus admin-1 atau admin-2",
+        `sender harus salah satu dari: ${participantList}`,
+        index
+      )
+    }
+
+    if (!participants.has(step.recipient)) {
+      throw new ScenarioValidationError(
+        `recipient harus salah satu dari: ${participantList}`,
+        index
+      )
+    }
+
+    if (step.sender === step.recipient) {
+      throw new ScenarioValidationError(
+        "sender dan recipient tidak boleh sama (tidak bisa kirim pesan ke diri sendiri)",
         index
       )
     }
@@ -70,19 +86,21 @@ export function validateScenario(scenario, options = {}) {
       )
     }
 
-    return Object.freeze({ sender: step.sender, text, delayMs: step.delayMs })
+    return Object.freeze({
+      sender: step.sender,
+      recipient: step.recipient,
+      text,
+      delayMs: step.delayMs
+    })
   })
 }
 
-function getRecipient(sender) {
-  return sender === "admin-1" ? "admin-2" : "admin-1"
-}
-
 export class ConversationRunner {
-  constructor({ sessionManager, logger, wait = sleep }) {
+  constructor({ sessionManager, logger, wait = sleep, historyRecorder = null }) {
     this.sessionManager = sessionManager
     this.logger = logger
     this.wait = wait
+    this.historyRecorder = historyRecorder
     this.running = false
   }
 
@@ -92,7 +110,8 @@ export class ConversationRunner {
     }
 
     const steps = validateScenario(scenario, {
-      maxSteps: options.maxSteps
+      maxSteps: options.maxSteps,
+      participants: options.participants
     })
     const externalSignal = options.signal
     const deliveryReceiptTimeoutMs = options.deliveryReceiptTimeoutMs ?? 30000
@@ -146,7 +165,7 @@ export class ConversationRunner {
       const results = []
 
       for (const [index, step] of steps.entries()) {
-        const recipient = getRecipient(step.sender)
+        const recipient = step.recipient
         this.logger.info("conversation.step.waiting", {
           step: index + 1,
           sender: step.sender,
@@ -167,6 +186,19 @@ export class ConversationRunner {
 
         if (!messageId) {
           throw new Error(`Baileys tidak mengembalikan messageId pada langkah ${index + 1}`)
+        }
+
+        if (this.historyRecorder) {
+          try {
+            this.historyRecorder.record(step.sender, recipient, sentAt)
+          } catch (error) {
+            this.logger.warn("conversation.step.history-record-failed", {
+              step: index + 1,
+              sender: step.sender,
+              recipient,
+              error
+            })
+          }
         }
 
         let deliveryStatus = null

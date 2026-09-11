@@ -19,6 +19,11 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.db
 
+# Riwayat warm-up bertahap (seniority-based) -- dibuat otomatis saat runtime,
+# isinya bukan kode dan bisa dianggap sensitif (pola percakapan antar admin)
+data/relationship-state.json
+data/.relationship-state.json.tmp-*
+
 # Artefak lokal
 coverage/
 .DS_Store

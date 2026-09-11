@@ -61,20 +61,54 @@ async function main() {
   })
 
   if (config.mode === "conversation") {
-    const [{ createConversationRunner }, { createDefaultConversationScenario }] =
-      await Promise.all([
-        import("./conversation/runner.js"),
-        import("./conversation/scenarios.js")
-      ])
-    const runner = createConversationRunner({ sessionManager, logger })
-    const scenario = createDefaultConversationScenario(
-      config.limits.messageDelayMs
-    )
+    const [
+      { createConversationRunner },
+      { createDynamicConversationScenario },
+      { createFileBackedRecorder }
+    ] = await Promise.all([
+      import("./conversation/runner.js"),
+      import("./conversation/scenarios.js"),
+      import("./state/relationship-store.js")
+    ])
+
+    const activeAdmins = Object.values(config.admins).map((admin) => admin.name)
+    const historyRecorder = createFileBackedRecorder(config.seniority.stateFilePath, {
+      onError: (error) =>
+        logger.warn("app.relationship-state.load-failed", {
+          filePath: config.seniority.stateFilePath,
+          error
+        })
+    })
+    const relationshipState = historyRecorder.getState()
+
+    logger.info("app.relationship-state.loaded", {
+      filePath: config.seniority.stateFilePath,
+      totalAdminsWithHistory: Object.keys(relationshipState.admins).length,
+      totalPairsWithHistory: Object.keys(relationshipState.pairs).length
+    })
+
+    // Minimal 2 admin sudah cukup untuk mulai chat -- tidak perlu menunggu
+    // admin ke-3/ke-4 aktif (lihat newFeture.md §1). Pasangan yang sudah
+    // pernah chat diproses duluan, dan admin "lama" wajib menyapa admin
+    // "baru" duluan untuk pasangan yang belum pernah chat sama sekali.
+    const scenario = createDynamicConversationScenario({
+      activeAdmins,
+      relationshipState,
+      thresholdMessages: config.seniority.thresholdMessages,
+      messageDelayMs: config.limits.messageDelayMs,
+      maxSteps: config.limits.maxConversationSteps
+    })
+    const runner = createConversationRunner({
+      sessionManager,
+      logger,
+      historyRecorder
+    })
 
     try {
       await runner.run(scenario, {
         maxSteps: config.limits.maxConversationSteps,
         deliveryReceiptTimeoutMs: config.limits.deliveryReceiptTimeoutMs,
+        participants: activeAdmins,
         signal: shutdownManager.signal
       })
       await shutdownManager.shutdown("conversation-completed")

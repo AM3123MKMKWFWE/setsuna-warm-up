@@ -7,24 +7,29 @@
 **Platform:** Node.js 20+ / JavaScript ES Modules
 
 **Library koneksi:** `@whiskeysockets/baileys`
-**Tahap saat ini:** Tahap 3 selesai pada level kode; Tahap 4 dirancang ulang untuk stabilitas simulator dua akun
+**Tahap saat ini:** Tahap 3 selesai pada level kode; Tahap 4 dirancang ulang untuk stabilitas simulator. Diperluas dari dua akun (admin-1/admin-2) menjadi empat akun (admin-1 s.d. admin-4) — lihat §2 dan §7.
 
 **Integrasi tambahan:** subset defensif dan opt-in `baileys-antiban` 4.10.0
 diterapkan (lihat §7.1) tanpa menjalankan Tahap 4.
 
 ## 2. Tujuan
 
-Proyek ini digunakan untuk QA percakapan terkontrol antara dua akun WhatsApp milik sendiri:
+Proyek ini digunakan untuk QA percakapan terkontrol antara empat akun WhatsApp milik sendiri (admin-1 s.d. admin-4), saling bertukar pesan berpasangan sehingga tidak ada admin yang hanya pernah chat dengan satu kontak yang sama terus-menerus:
 
 ```text
-Admin 1 -> Admin 2 -> Admin 1 -> Admin 2 -> selesai
+admin-1 <-> admin-2
+admin-3 <-> admin-4
+admin-1 <-> admin-3
+admin-2 <-> admin-4
+admin-1 <-> admin-4
+admin-2 <-> admin-3
 ```
 
 Tujuan fungsional:
 
-1. Menjalankan dua session WhatsApp secara independen.
-2. Menyimpan credential kedua session pada direktori berbeda.
-3. Memastikan kedua session siap dan menggunakan akun berbeda.
+1. Menjalankan empat session WhatsApp secara independen.
+2. Menyimpan credential setiap session pada direktori berbeda.
+3. Memastikan seluruh session siap dan menggunakan akun berbeda satu sama lain.
 4. Menjalankan skenario percakapan finite secara berurutan.
 5. Memberikan jeda yang dapat dikonfigurasi di antara pesan.
 6. Menunggu status delivery setiap langkah tanpa membuat percakapan tanpa batas.
@@ -35,7 +40,7 @@ Tujuan fungsional:
 
 ### Termasuk
 
-- dua session Baileys milik pengguna;
+- empat session Baileys milik pengguna (admin-1 s.d. admin-4);
 - pairing QR dan penyimpanan auth state terpisah;
 - pengiriman manual dua arah untuk diagnosis;
 - skenario percakapan finite;
@@ -46,10 +51,10 @@ Tujuan fungsional:
 - klasifikasi disconnect dan monitoring indikasi `Bad MAC`;
 - pengujian otomatis tanpa koneksi WhatsApp nyata;
 - subset opt-in `baileys-antiban` untuk *mengurangi sinyal bot* pada koneksi
-  antara dua akun sendiri (lihat §7.1): presence choreography (typing plan
+  antar akun sendiri (lihat §7.1): presence choreography (typing plan
   deterministik), human entropy (aktivitas idle acak ke kontak yang sudah
   membalas duluan), device fingerprint randomization, dan stealth connect.
-  Ini bukan penyamaran percakapan — kedua ujung percakapan tetap akun sendiri
+  Ini bukan penyamaran percakapan — seluruh akun tetap milik pengguna sendiri
   yang saling tahu, tidak ada pihak yang dikelabui.
 
 ### Tidak termasuk
@@ -74,20 +79,20 @@ Tujuan fungsional:
 ## 4. Arsitektur
 
 ```text
-                       src/app.js
-                           |
-                    Session Manager
-                    /             \
-                   v               v
-            Session Admin 1   Session Admin 2
-                   \               /
-                    +-------------+
-                           |
-                  Conversation Runner
-                           |
-             Scenario -> Delay -> Send -> ACK
-                           |
-                    Finite completion
+                            src/app.js
+                                |
+                         Session Manager
+                  /        /        \        \
+                 v        v          v        v
+            Admin 1   Admin 2    Admin 3   Admin 4
+                  \        \        /        /
+                   +--------+------+--------+
+                             |
+                    Conversation Runner
+                             |
+      Scenario (6 pasangan) -> Delay -> Send -> ACK
+                             |
+                     Finite completion
 ```
 
 Setiap session memiliki socket, auth directory, state, reconnect counter, dan log context sendiri. Error satu session tidak boleh mengubah credential session lainnya.
@@ -126,11 +131,13 @@ src/
 | `WA_CONNECT_ENABLED` | Mengaktifkan koneksi nyata secara eksplisit |
 | `ADMIN_1_AUTH_DIR` | Direktori credential Admin 1 |
 | `ADMIN_2_AUTH_DIR` | Direktori credential Admin 2 |
+| `ADMIN_3_AUTH_DIR` | Direktori credential Admin 3 |
+| `ADMIN_4_AUTH_DIR` | Direktori credential Admin 4 |
 | `MAX_CONVERSATION_STEPS` | Batas keras jumlah langkah |
 | `MESSAGE_DELAY_MS` | Jeda antarlangkah setelah pesan pertama |
 | `DELIVERY_RECEIPT_TIMEOUT_MS` | Batas tunggu `DELIVERY_ACK` |
 | `RECONNECT_LIMIT` | Batas percobaan reconnect per session |
-| `SESSION_READY_TIMEOUT_MS` | Batas tunggu kedua session siap |
+| `SESSION_READY_TIMEOUT_MS` | Batas tunggu seluruh session siap |
 | `MANUAL_TEST_STABILIZATION_MS` | Jeda stabilisasi tes manual |
 | `SESSION_HEALTH_ENABLED` | Mengaktifkan monitoring kesehatan dekripsi defensif |
 | `SESSION_BAD_MAC_THRESHOLD` | Jumlah indikasi `Bad MAC` sebelum session dianggap degraded |
@@ -150,9 +157,9 @@ src/
 
 ## 7. Aturan simulator
 
-- Hanya `admin-1` dan `admin-2` yang dapat menjadi sender.
-- Target selalu merupakan akun pasangannya.
-- Kedua session harus `ready` dan terhubung ke akun berbeda.
+- `sender` dan `recipient` harus salah satu dari `admin-1`, `admin-2`, `admin-3`, `admin-4`.
+- `recipient` ditentukan eksplisit per langkah skenario (bukan pasangan tetap), dan tidak boleh sama dengan `sender`.
+- Seluruh session harus `ready` dan terhubung ke akun berbeda satu sama lain.
 - Pesan pertama dapat dikirim segera; pesan berikutnya mengikuti `MESSAGE_DELAY_MS`.
 - Setiap langkah hanya memanggil satu pengiriman.
 - Receipt timeout dicatat sebagai `delivery-unconfirmed`; skenario hanya berlanjut jika session tetap sehat.
@@ -204,7 +211,7 @@ Paket `baileys-antiban` dikunci pada versi `4.10.0`. Modul yang dipakai:
   membatalkan aksi yang sedang berjalan, bukan cuma jadwal siklus berikutnya.
 - `generateFingerprint` / `applyFingerprint` (`DEVICE_FINGERPRINT_ENABLED`) —
   appVersion/osVersion/deviceModel diacak tapi deterministik per nama session
-  (admin-1 dan admin-2 mendapat fingerprint berbeda, stabil lintas restart).
+  (setiap admin mendapat fingerprint berbeda, stabil lintas restart).
   Hanya tuple `browser` (kosmetik) dari fingerprint yang dipakai; field
   `version` yang ikut ditimpa oleh `applyFingerprint()` sengaja dibuang
   (`delete socketConfig.version`) karena memakai skema versi mobile-app lama
@@ -237,24 +244,24 @@ Paket `baileys-antiban` dikunci pada versi `4.10.0`. Modul yang dipakai:
   fingerprint diterapkan belakangan dan menang di field `browser` (field
   `version` dari kedua fitur ini sama-sama dibuang, lihat BUG-003).
   `getRetryJitter` menambah variasi kecil ke delay reconnect di
-  `#scheduleReconnect` supaya admin-1/admin-2 tidak selalu memakai jadwal
+  `#scheduleReconnect` supaya keempat admin tidak selalu memakai jadwal
   backoff yang identik.
 
 Modul yang **tidak** dipakai: `wrapSocket`/`AntiBan` (wrapper rate-limiter
 umum), `proxyRotator`, `ContactGraphWarmer`/`TopologyThrottler`, `WarmUp`
 otomatis skala besar, `InstanceCoordinator` (fleet multi-instance), dan modul
-group/broadcast — di luar kebutuhan simulator dua akun ini. `ReputationVoucher`
+group/broadcast — di luar kebutuhan simulator akun sendiri ini. `ReputationVoucher`
 juga belum dipakai: modul itu secara desain butuh pihak ketiga ("customer"
-yang dihubungi nomor baru setelah divouch oleh akun lama) di luar admin-1/
-admin-2 yang sudah saling kenal — implementasinya berarti memutuskan apakah
-simulator ini mulai menghubungi penerima di luar dua akun sendiri, yang belum
+yang dihubungi nomor baru setelah divouch oleh akun lama) di luar admin-1
+s.d. admin-4 yang sudah saling kenal — implementasinya berarti memutuskan apakah
+simulator ini mulai menghubungi penerima di luar empat akun sendiri, yang belum
 diputuskan (lihat catatan kontradiksi di §3 soal cold messaging/blast).
 
 Batasan penting: fitur opt-in di atas kini mencakup dua level — koneksi/
 protokol (presence timing, device/session fingerprint, jitter reconnect,
 jeda read receipt) DAN, sejak `LegitimacySignalInjector`, isi pesan itu
-sendiri (typo buatan + koreksi). Yang tidak berubah: kedua ujung percakapan
-(`admin-1` dan `admin-2`) tetap akun milik pengguna sendiri yang saling
+sendiri (typo buatan + koreksi). Yang tidak berubah: seluruh akun
+(`admin-1` s.d. `admin-4`) tetap milik pengguna sendiri yang saling
 tahu, sehingga typo buatan ini adalah simulasi ketidaksempurnaan manusia
 antar akun sendiri, bukan konten yang dipakai untuk mengelabui pihak ketiga.
 Integrasi ini tetap **tidak menjamin** akun bebas pembatasan dan **tidak
@@ -278,10 +285,10 @@ proyek ini akan diperluas ke arah itu masih terbuka (§3).
 
 **Status:** implementasi selesai; kesehatan auth nyata tetap perlu dipantau.
 
-- Dua auth directory terpisah.
+- Empat auth directory terpisah (admin-1 s.d. admin-4).
 - Lifecycle dan reconnect per session.
 - QR pairing per admin.
-- Verifikasi bahwa kedua session memakai akun berbeda.
+- Verifikasi bahwa seluruh session memakai akun berbeda satu sama lain.
 - Jalur `npm run test:manual-send` untuk diagnosis dua arah.
 
 Target nyata yang belum tuntas:
@@ -309,18 +316,18 @@ Target:
 - [x] Delay diterapkan sebelum langkah berikutnya.
 - [x] Runner berhenti ketika session tidak tersedia.
 - [x] Runner selalu selesai atau gagal secara finite.
-- [ ] Skenario bawaan selesai penuh menggunakan dua akun nyata.
+- [ ] Skenario bawaan selesai penuh menggunakan empat akun nyata.
 
 ## Tahap 4 — Stabilitas dan variasi pengujian percakapan
 
 **Status:** dirancang ulang; belum diimplementasikan.
 
-Tahap ini memperkuat simulator dua akun tanpa menambahkan pelanggan, Community, broadcast, atau auto-reply inbound.
+Tahap ini memperkuat simulator empat akun tanpa menambahkan pelanggan, Community, broadcast, atau auto-reply inbound.
 
-### 4.1 Preflight kedua session
+### 4.1 Preflight seluruh session
 
-- Tunggu kedua session `ready`.
-- Pastikan JID kedua akun berbeda.
+- Tunggu seluruh session `ready`.
+- Pastikan JID seluruh akun berbeda satu sama lain.
 - Verifikasi target kanonis sebelum skenario dimulai.
 - Hentikan pengujian sebelum pesan pertama jika preflight gagal.
 
@@ -370,7 +377,7 @@ Laporan tidak boleh berisi credential, auth state, QR, atau nomor lengkap.
 - [ ] Setiap run mempunyai ID serta ringkasan hasil.
 - [ ] ACK terlambat dicatat tanpa mengirim ulang pesan.
 - [ ] Automated test mencakup preflight, profil, laporan, dan timeout.
-- [ ] Uji nyata dijalankan hanya secara manual dengan dua akun milik sendiri.
+- [ ] Uji nyata dijalankan hanya secara manual dengan akun milik sendiri (admin-1 s.d. admin-4).
 
 ## Tahap 5 — Hardening dan observability
 
@@ -387,7 +394,7 @@ Laporan tidak boleh berisi credential, auth state, QR, atau nomor lengkap.
 
 **Status:** direncanakan.
 
-- Jalankan hanya dengan dua akun pengujian milik sendiri.
+- Jalankan hanya dengan akun pengujian milik sendiri (admin-1 s.d. admin-4).
 - Mulai setiap run secara manual.
 - Jangan menjalankan dua process pada auth directory yang sama.
 - Tinjau hasil delivery dan disconnect setelah setiap run.
